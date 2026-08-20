@@ -1,0 +1,103 @@
+@import "tailwindcss";
+
+html,
+body,
+#app {
+    min-height: 100%;
+    background-color: #0e172b;
+    color: #e2e8f0;
+}
+
+@layer base {
+    input:not([type='checkbox']):not([type='radio']):not([type='hidden']):not([type='file']):not([type='submit']):not([type='button']),
+    select,
+    textarea {
+        background-color: #0e172b;
+        color: #e2e8f0;
+        border-color: #334155;
+    }
+}
+
+.sidebar-scroll {
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: #6366f1 transparent;
+    mask-image: linear-gradient(
+        to bottom,
+        transparent 0,
+        #000 12px,
+        #000 calc(100% - 20px),
+        transparent 100%
+    );
+}
+
+.sidebar-scroll::-webkit-scrollbar {
+    width: 6px;
+}
+
+.sidebar-scroll::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, #6366f1, #8b5cf6);
+    border-radius: 999px;
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, #818cf8, #a78bfa);
+}
+
+@keyframes sidebar-item-in {
+    from {
+        opacity: 0;
+        transform: translateX(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes sidebar-glow {
+    0%,
+    100% {
+        box-shadow: 0 0 0 0 rgb(99 102 241 / 0.35);
+    }
+    50% {
+        box-shadow: 0 0 18px 1px rgb(99 102 241 / 0.28);
+    }
+}
+
+@keyframes sidebar-spark {
+    0%,
+    100% {
+        transform: translateY(0);
+        opacity: 0.85;
+    }
+    50% {
+        transform: translateY(-2px);
+        opacity: 1;
+    }
+}
+
+.sidebar-item-enter {
+    animation: sidebar-item-in 0.45s ease both;
+}
+
+.sidebar-item-active {
+    animation: sidebar-glow 2.8s ease-in-out infinite;
+}
+
+.sidebar-motivate {
+    animation: sidebar-spark 3.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .sidebar-item-enter,
+    .sidebar-item-active,
+    .sidebar-motivate {
+        animation: none;
+    }
+}
