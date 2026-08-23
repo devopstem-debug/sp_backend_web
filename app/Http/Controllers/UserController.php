@@ -11,6 +11,8 @@ use App\Models\Department;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Models\UserComment;
+use App\Services\FirebaseAuthService;
+use App\Services\FirebaseUserService;
 use App\Support\Permissions;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -18,13 +20,21 @@ use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Inertia\Inertia;
 use Inertia\Response;
+use RuntimeException;
 use Spatie\Activitylog\Models\Activity;
 use Spatie\Permission\Models\Role;
+use Throwable;
 
 class UserController extends Controller implements HasMiddleware
 {
+    public function __construct(
+        private readonly FirebaseAuthService $firebaseAuth,
+        private readonly FirebaseUserService $firebaseUsers,
+    ) {}
+
     /**
      * @return list<Middleware>
      */
@@ -86,13 +96,21 @@ class UserController extends Controller implements HasMiddleware
             'tenants' => $this->tenantsForSelect(),
             'departments' => $this->departmentsForSelect(),
             'canManageTenants' => (bool) $actor?->isSuperAdmin(),
+            'quota' => $this->userQuotaForActor($actor),
         ]);
     }
 
-    public function create(): Response
+    public function create(): Response|RedirectResponse
     {
         $actor = Auth::user();
         $requestedTenant = request()->string('tenant_id')->toString();
+        $quota = $this->userQuotaForActor($actor);
+
+        if ($quota && ! $quota['can_add'] && ! $actor?->isSuperAdmin()) {
+            return redirect()
+                ->route('users.index')
+                ->with('error', $quota['message'] ?? 'Лимит пользователей исчерпан.');
+        }
 
         return Inertia::render('Users/Create', [
             'roles' => $this->rolesForSelect(),
@@ -102,37 +120,97 @@ class UserController extends Controller implements HasMiddleware
             'defaultTenantId' => $actor?->isSuperAdmin()
                 ? ($requestedTenant ?: null)
                 : $actor?->tenant_id,
+            'quota' => $quota,
         ]);
     }
 
     public function store(StoreUserRequest $request): RedirectResponse
     {
         $data = $request->validated();
+        $tenantId = $data['tenant_id'] ?? null;
+        $firebaseUid = null;
+        $firebaseWarning = null;
 
-        $user = DB::transaction(function () use ($data): User {
-            $user = User::query()->create([
-                'name' => $data['name'],
-                'email' => $data['email'],
-                'phone' => $data['phone'] ?? null,
-                'password' => $data['password'],
-                'tenant_id' => $data['tenant_id'] ?? null,
-                'department_id' => $data['role'] === Permissions::ROLE_HEAD
-                    ? ($data['department_id'] ?? null)
-                    : null,
-                'timezone' => $data['timezone'] ?? 'Europe/Minsk',
-                'locale' => $data['locale'] ?? 'ru',
-                'is_active' => (bool) ($data['is_active'] ?? true),
-                'email_verified_at' => now(),
-            ]);
+        try {
+            if ($this->firebaseAuth->isConfigured($tenantId)) {
+                try {
+                    $firebaseUid = $this->firebaseAuth->createUser(
+                        $data['email'],
+                        $data['password'],
+                        $data['name'],
+                        $tenantId,
+                    );
+                } catch (RuntimeException $exception) {
+                    Log::warning('Firebase Auth unavailable during user create, continuing locally', [
+                        'email' => $data['email'],
+                        'message' => $exception->getMessage(),
+                    ]);
+                    $firebaseWarning = 'Пользователь создан в панели, но Firebase Auth недоступен. Проверьте настройки Firebase.';
+                    $firebaseUid = null;
+                }
+            }
 
-            $user->syncRoles([$data['role']]);
+            $user = DB::transaction(function () use ($data, $firebaseUid): User {
+                $user = User::query()->create([
+                    'name' => $data['name'],
+                    'email' => $data['email'],
+                    'firebase_uid' => $firebaseUid,
+                    'phone' => $data['phone'] ?? null,
+                    'password' => $data['password'],
+                    'tenant_id' => $data['tenant_id'] ?? null,
+                    'department_id' => $data['role'] === Permissions::ROLE_HEAD
+                        ? ($data['department_id'] ?? null)
+                        : null,
+                    'timezone' => $data['timezone'] ?? 'Europe/Minsk',
+                    'locale' => $data['locale'] ?? 'ru',
+                    'is_active' => (bool) ($data['is_active'] ?? true),
+                    'email_verified_at' => now(),
+                ]);
 
-            return $user;
-        });
+                $user->syncRoles([$data['role']]);
+
+                return $user->fresh(['roles', 'department']) ?? $user;
+            });
+
+            if ($firebaseUid && $this->firebaseUsers->isConfigured($tenantId)) {
+                try {
+                    $this->firebaseUsers->syncUser($user, $tenantId);
+                } catch (RuntimeException $exception) {
+                    Log::warning('Firebase RTDB sync failed after user create', [
+                        'user_id' => $user->id,
+                        'message' => $exception->getMessage(),
+                    ]);
+                    $firebaseWarning ??= 'Пользователь создан, но синхронизация с Firebase RTDB не удалась.';
+                }
+            }
+        } catch (Throwable $exception) {
+            if ($firebaseUid) {
+                try {
+                    $this->firebaseAuth->deleteUser($firebaseUid, $tenantId);
+                } catch (Throwable $cleanupException) {
+                    Log::warning('Firebase Auth cleanup after failed user create', [
+                        'uid' => $firebaseUid,
+                        'message' => $cleanupException->getMessage(),
+                    ]);
+                }
+            }
+
+            if ($exception instanceof RuntimeException) {
+                return back()->withInput()->with('error', $exception->getMessage());
+            }
+
+            throw $exception;
+        }
+
+        $message = 'Пользователь создан.';
+        if ($firebaseUid && ! $firebaseWarning) {
+            $message .= ' Синхронизирован с Firebase.';
+        }
 
         return redirect()
             ->route('users.show', $user->id)
-            ->with('success', 'Пользователь создан.');
+            ->with('success', $message)
+            ->with('warning', $firebaseWarning);
     }
 
     public function show(string $user): Response
@@ -219,31 +297,62 @@ class UserController extends Controller implements HasMiddleware
     {
         $model = $this->findManagedUser($user);
         $data = $request->validated();
+        $tenantId = $data['tenant_id'] ?? $model->tenant_id;
+        $passwordChanged = ! empty($data['password']);
+        $wasActive = (bool) $model->is_active;
 
-        DB::transaction(function () use ($model, $data): void {
-            $payload = [
-                'name' => $data['name'],
-                'email' => $data['email'],
-                'phone' => $data['phone'] ?? null,
-                'tenant_id' => $data['tenant_id'] ?? null,
-                'department_id' => ($data['role'] ?? null) === Permissions::ROLE_HEAD
-                    ? ($data['department_id'] ?? null)
-                    : null,
-                'timezone' => $data['timezone'] ?? $model->timezone,
-                'locale' => $data['locale'] ?? $model->locale,
-            ];
+        try {
+            DB::transaction(function () use ($model, $data): void {
+                $payload = [
+                    'name' => $data['name'],
+                    'email' => $data['email'],
+                    'phone' => $data['phone'] ?? null,
+                    'tenant_id' => $data['tenant_id'] ?? null,
+                    'department_id' => ($data['role'] ?? null) === Permissions::ROLE_HEAD
+                        ? ($data['department_id'] ?? null)
+                        : null,
+                    'timezone' => $data['timezone'] ?? $model->timezone,
+                    'locale' => $data['locale'] ?? $model->locale,
+                ];
 
-            if (array_key_exists('is_active', $data)) {
-                $payload['is_active'] = (bool) $data['is_active'];
+                if (array_key_exists('is_active', $data)) {
+                    $payload['is_active'] = (bool) $data['is_active'];
+                }
+
+                if (! empty($data['password'])) {
+                    $payload['password'] = $data['password'];
+                }
+
+                $model->update($payload);
+                $model->syncRoles([$data['role']]);
+            });
+
+            $model->refresh()->load(['roles', 'department']);
+
+            if ($model->firebase_uid && $this->firebaseAuth->isConfigured($tenantId)) {
+                if ($passwordChanged) {
+                    $this->firebaseAuth->updatePassword(
+                        (string) $model->firebase_uid,
+                        (string) $data['password'],
+                        $tenantId,
+                    );
+                }
+
+                if (array_key_exists('is_active', $data) && (bool) $data['is_active'] !== $wasActive) {
+                    if ((bool) $data['is_active']) {
+                        $this->firebaseAuth->enableUser((string) $model->firebase_uid, $tenantId);
+                    } else {
+                        $this->firebaseAuth->disableUser((string) $model->firebase_uid, $tenantId);
+                    }
+                }
             }
 
-            if (! empty($data['password'])) {
-                $payload['password'] = $data['password'];
+            if ($model->firebase_uid && $this->firebaseUsers->isConfigured($tenantId)) {
+                $this->firebaseUsers->syncUser($model, $tenantId);
             }
-
-            $model->update($payload);
-            $model->syncRoles([$data['role']]);
-        });
+        } catch (RuntimeException $exception) {
+            return back()->withInput()->with('error', $exception->getMessage());
+        }
 
         return redirect()
             ->route('users.show', $model->id)
@@ -258,7 +367,22 @@ class UserController extends Controller implements HasMiddleware
             return back()->with('error', 'Нельзя удалить собственный аккаунт.');
         }
 
-        $model->delete();
+        $firebaseUid = $model->firebase_uid ? (string) $model->firebase_uid : null;
+        $tenantId = $model->tenant_id;
+
+        try {
+            if ($firebaseUid && $this->firebaseAuth->isConfigured($tenantId)) {
+                $this->firebaseAuth->deleteUser($firebaseUid, $tenantId);
+            }
+
+            if ($firebaseUid && $this->firebaseUsers->isConfigured($tenantId)) {
+                $this->firebaseUsers->deleteUserProfile($firebaseUid, $tenantId);
+            }
+
+            $model->delete();
+        } catch (RuntimeException $exception) {
+            return back()->with('error', $exception->getMessage());
+        }
 
         return redirect()
             ->route('users.index')
@@ -273,7 +397,22 @@ class UserController extends Controller implements HasMiddleware
             return back()->with('error', 'Нельзя заблокировать собственный аккаунт.');
         }
 
-        $model->update(['is_active' => ! $model->is_active]);
+        $willBeActive = ! $model->is_active;
+        $tenantId = $model->tenant_id;
+
+        try {
+            if ($model->firebase_uid && $this->firebaseAuth->isConfigured($tenantId)) {
+                if ($willBeActive) {
+                    $this->firebaseAuth->enableUser((string) $model->firebase_uid, $tenantId);
+                } else {
+                    $this->firebaseAuth->disableUser((string) $model->firebase_uid, $tenantId);
+                }
+            }
+
+            $model->update(['is_active' => $willBeActive]);
+        } catch (RuntimeException $exception) {
+            return back()->with('error', $exception->getMessage());
+        }
 
         return back()->with(
             'success',
@@ -373,6 +512,7 @@ class UserController extends Controller implements HasMiddleware
             'status_label' => $user->is_active ? 'Активен' : 'Заблокирован',
             'last_login_at' => $user->last_login_at?->timezone(Auth::user()?->timezone ?? 'UTC')->toIso8601String(),
             'created_at' => $user->created_at?->timezone(Auth::user()?->timezone ?? 'UTC')->toIso8601String(),
+            'firebase_uid' => $user->firebase_uid,
         ];
 
         if ($detailed) {
@@ -429,5 +569,23 @@ class UserController extends Controller implements HasMiddleware
             ])
             ->values()
             ->all();
+    }
+
+    /**
+     * @return array{used: int, max: int, remaining: int, can_add: bool, message: string|null}|null
+     */
+    private function userQuotaForActor(?User $actor): ?array
+    {
+        if (! $actor?->tenant_id) {
+            return null;
+        }
+
+        $tenant = Tenant::query()->find($actor->tenant_id);
+
+        if (! $tenant) {
+            return null;
+        }
+
+        return app(\App\Services\TenantQuotaService::class)->userQuotaSummary($tenant);
     }
 }

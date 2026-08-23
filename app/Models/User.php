@@ -21,7 +21,7 @@ use Spatie\Activitylog\Models\Concerns\LogsActivity;
 use Spatie\Activitylog\Support\LogOptions;
 use Spatie\Permission\Traits\HasRoles;
 
-#[Fillable(['name', 'email', 'password', 'tenant_id', 'department_id', 'phone', 'timezone', 'locale', 'is_active', 'locked_until', 'last_login_at'])]
+#[Fillable(['name', 'email', 'firebase_uid', 'password', 'tenant_id', 'department_id', 'phone', 'timezone', 'locale', 'is_active', 'locked_until', 'last_login_at'])]
 #[Hidden(['password', 'remember_token'])]
 class User extends Authenticatable
 {

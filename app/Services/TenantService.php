@@ -49,7 +49,12 @@ class TenantService
 
     public function update(Tenant $tenant, array $data): Tenant
     {
+        $previousPlan = $tenant->plan;
         $tenant->update($data);
+
+        if (($data['plan'] ?? $previousPlan) !== $previousPlan) {
+            $this->syncSubscriptionPlan($tenant->refresh());
+        }
 
         return $tenant->refresh();
     }
@@ -154,6 +159,29 @@ class TenantService
             'starts_at' => now(),
             'ends_at' => $endsAt,
             'auto_renew' => true,
+        ]);
+    }
+
+    private function syncSubscriptionPlan(Tenant $tenant): void
+    {
+        $plan = Plan::query()->where('slug', $tenant->plan)->first();
+
+        if (! $plan) {
+            return;
+        }
+
+        $subscription = $tenant->subscriptions()
+            ->latest('starts_at')
+            ->first();
+
+        if (! $subscription) {
+            $this->provisionSubscription($tenant);
+
+            return;
+        }
+
+        $subscription->update([
+            'plan_id' => $plan->id,
         ]);
     }
 }

@@ -19,9 +19,6 @@ class ChatMessageCreated implements ShouldBroadcastNow
         public ChatMessage $message,
     ) {}
 
-    /**
-     * @return array<int, PrivateChannel>
-     */
     public function broadcastOn(): array
     {
         return [
@@ -34,10 +31,6 @@ class ChatMessageCreated implements ShouldBroadcastNow
     {
         return 'chat.message.created';
     }
-
-    /**
-     * @return array<string, mixed>
-     */
     public function broadcastWith(): array
     {
         return [

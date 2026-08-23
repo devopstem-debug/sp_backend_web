@@ -73,8 +73,49 @@ FIREBASE_CREDENTIALS=/absolute/path/to/firebase-credentials.json
 | Файл не находится после upload | Смотрите `storage/app/private/settings/...`, не `storage/app/firebase` |
 | Работает локально, не на сервере | Абсолютный путь в `.env` отличается; права на файл `chmod 600` |
 
+## Пользователи (Firebase Auth + RTDB)
+
+При создании/обновлении пользователя (если Firebase credentials настроены):
+
+1. **Firebase Auth** — аккаунт email/password, uid сохраняется в `users.firebase_uid`.
+2. **Realtime Database** — профиль:
+
+```text
+users/{firebase_uid}/
+  name
+  role
+  department
+  store_keys: [ ... ]
+```
+
+| Событие | Auth | RTDB |
+|---------|------|------|
+| Создание | `createUser` | `syncUser` (name, role, department, store_keys) |
+| Смена пароля | `updatePassword` | — |
+| Смена роли / отдела | — | `syncUser` (обновляет store_keys) |
+| Блокировка | `disableUser` | — |
+| Разблокировка | `enableUser` | — |
+| Удаление | `deleteUser` | `deleteUserProfile` |
+
+`store_keys` для Заведующего — ключ магазина его отдела; для остальных ролей tenant — все магазины арендатора; Super Admin — `[]`.
+
+Сервисы: `FirebaseAuthService`, `FirebaseUserService`.
+
+## Автосинхронизация магазинов
+
+При изменении Store / Department / Shelf / Cooler / Stand / Placement в очередь ставится Job `SyncStoreToFirebase` (debounce ~3 с, unique 60 с).
+
+- Retry: 3 попытки, backoff **5 минут**
+- Лог: `sync_logs` (`status`, `json_size`, `message`, `synced_at`)
+- При окончательном провале — уведомление tenant (тип error)
+- Статус: `GET /api/v1/sync/status?store_id=`
+- Ручной запуск: **Экспорт → Синхронизировать сейчас**
+
+Нужен воркер: `php artisan queue:work`
+
 ## Безопасность
 
 - Файл service account = полный доступ Admin SDK к проекту Firebase.
 - Права на редактирование интеграций: `edit-integrations` (Super Admin / Программист).
 - На проде предпочитайте загрузку через UI или секрет-хранилище хостинга, а не путь внутри публичного репозитория.
+

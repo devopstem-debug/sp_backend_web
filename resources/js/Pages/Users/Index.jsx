@@ -11,7 +11,7 @@ import {
 import { useEffect, useState } from 'react';
 import AdminLayout from '@/layouts/AdminLayout';
 import { useCan } from '@/lib/permissions';
-import { fireConfirm, fireError, fireSuccess } from '@/lib/swal';
+import { fireConfirm, fireError, fireSuccess, fireToast } from '@/lib/swal';
 import clsx from 'clsx';
 
 function formatDate(value) {
@@ -38,10 +38,11 @@ export default function Index({
     roles = [],
     tenants = [],
     canManageTenants = false,
+    quota = null,
 }) {
     const { flash } = usePage().props;
     const can = useCan();
-    const canCreate = can('create-users');
+    const canCreate = can('create-users') && (quota ? quota.can_add : true);
     const canEdit = can('edit-users');
     const canBlock = can('block-users');
     const canDelete = can('delete-users');
@@ -56,6 +57,9 @@ export default function Index({
         }
         if (flash?.error) {
             fireError(flash.error);
+        }
+        if (flash?.warning) {
+            fireToast('warning', flash.warning);
         }
     }, [flash]);
 
@@ -136,19 +140,48 @@ export default function Index({
 
             <div className="space-y-4">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <p className="text-sm text-slate-400">
-                        Управление учётными записями и доступом
-                    </p>
-                    {canCreate && (
-                    <Link
-                        href={route('users.create')}
-                        className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500"
-                    >
-                        <PlusIcon className="h-5 w-5" aria-hidden="true" />
-                        Добавить
-                    </Link>
-                    )}
+                    <div>
+                        <p className="text-sm text-slate-400">
+                            Управление учётными записями и доступом
+                        </p>
+                        {quota ? (
+                            <p className="mt-1 text-xs text-slate-500">
+                                Лимит тарифа:{' '}
+                                <span className="font-medium text-slate-300">
+                                    {quota.used} / {quota.max}
+                                </span>
+                            </p>
+                        ) : null}
+                    </div>
+                    {canCreate ? (
+                        <Link
+                            href={route('users.create')}
+                            className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500"
+                        >
+                            <PlusIcon className="h-5 w-5" aria-hidden="true" />
+                            Добавить
+                        </Link>
+                    ) : can('create-users') && quota && !quota.can_add ? (
+                        <button
+                            type="button"
+                            onClick={() =>
+                                fireError(
+                                    quota.message ||
+                                        'Лимит пользователей по тарифу исчерпан.',
+                                )
+                            }
+                            className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-600 px-4 py-2 text-sm font-semibold text-slate-400"
+                        >
+                            Лимит исчерпан
+                        </button>
+                    ) : null}
                 </div>
+
+                {quota && !quota.can_add ? (
+                    <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+                        {quota.message}
+                    </div>
+                ) : null}
 
                 <div className="rounded-xl bg-[#152033] p-4 shadow-sm ring-1 ring-slate-800">
                     <div

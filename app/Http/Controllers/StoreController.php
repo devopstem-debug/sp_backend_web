@@ -38,6 +38,7 @@ class StoreController extends Controller implements HasMiddleware
 
     public function index(Request $request): Response
     {
+        $actor = Auth::user();
         $trashed = $request->boolean('trashed');
 
         $stores = Store::query()
@@ -70,14 +71,25 @@ class StoreController extends Controller implements HasMiddleware
                 'trashed' => $trashed,
             ],
             'trashedCount' => Store::onlyTrashed()->count(),
+            'quota' => $this->storeQuotaForActor($actor),
         ]);
     }
 
-    public function create(Request $request): Response
+    public function create(Request $request): Response|RedirectResponse
     {
+        $actor = Auth::user();
+        $quota = $this->storeQuotaForActor($actor);
+
+        if ($quota && ! $quota['can_add'] && ! $actor?->isSuperAdmin()) {
+            return redirect()
+                ->route('stores.index')
+                ->with('error', $quota['message'] ?? 'Лимит магазинов исчерпан.');
+        }
+
         return Inertia::render('Stores/Create', [
             'tenants' => $this->tenantsForSelect(),
             'defaultTenantId' => $request->string('tenant_id')->toString() ?: null,
+            'quota' => $quota,
         ]);
     }
 
@@ -217,5 +229,23 @@ class StoreController extends Controller implements HasMiddleware
                 'name' => $tenant->name,
             ])
             ->all();
+    }
+
+    /**
+     * @return array{used: int, max: int, remaining: int, can_add: bool, message: string|null}|null
+     */
+    private function storeQuotaForActor(?\App\Models\User $actor): ?array
+    {
+        if (! $actor?->tenant_id) {
+            return null;
+        }
+
+        $tenant = Tenant::query()->find($actor->tenant_id);
+
+        if (! $tenant) {
+            return null;
+        }
+
+        return app(TenantQuotaService::class)->storeQuotaSummary($tenant);
     }
 }

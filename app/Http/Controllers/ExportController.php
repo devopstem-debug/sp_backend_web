@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Jobs\SyncStoreToFirebase;
 use App\Models\Store;
 use App\Models\SyncLog;
 use App\Services\FirebaseService;
@@ -47,6 +48,7 @@ class ExportController extends Controller implements HasMiddleware
     {
         $user = Auth::user();
         $tenantId = $user?->tenant_id;
+        $timezone = $user?->timezone ?? 'UTC';
 
         $recentSyncs = SyncLog::query()
             ->with(['store:id,name,city'])
@@ -57,25 +59,29 @@ class ExportController extends Controller implements HasMiddleware
             ->latest('synced_at')
             ->limit(10)
             ->get()
-            ->map(fn (SyncLog $log) => [
-                'id' => $log->id,
-                'store_id' => $log->store_id,
-                'store_name' => is_array($log->store?->name)
-                    ? ($log->store->name['ru'] ?? $log->store->name['en'] ?? '')
-                    : (string) ($log->store?->name ?? ''),
-                'store_key' => $log->store_key,
-                'status' => $log->status,
-                'json_size' => $log->json_size,
-                'message' => $log->message,
-                'synced_at' => $log->synced_at?->timezone($user?->timezone ?? 'UTC')->toIso8601String(),
-            ])
+            ->map(fn (SyncLog $log) => $this->transformSyncLog($log, $timezone))
             ->values()
+            ->all();
+
+        $latestByStore = SyncLog::query()
+            ->when(
+                $user && ! $user->isSuperAdmin() && $tenantId,
+                fn ($query) => $query->where('tenant_id', $tenantId),
+            )
+            ->latest('synced_at')
+            ->get()
+            ->unique('store_id')
+            ->mapWithKeys(fn (SyncLog $log) => [
+                $log->store_id => $this->transformSyncLog($log, $timezone),
+            ])
             ->all();
 
         return Inertia::render('Export/Index', [
             'stores' => $this->storesForSelect(),
             'firebaseConfigured' => $this->firebase->isConfigured($tenantId),
             'recentSyncs' => $recentSyncs,
+            'latestByStore' => $latestByStore,
+            'autoSyncEnabled' => true,
         ]);
     }
 
@@ -132,8 +138,6 @@ class ExportController extends Controller implements HasMiddleware
         $store = $this->findAuthorizedStore($storeId);
         $user = Auth::user();
         $tenantId = $store->tenant_id ?? $user?->tenant_id;
-        $storeKey = $this->exports->storeKey($store);
-        $jsonSize = 0;
 
         try {
             if (! $this->firebase->isConfigured($tenantId)) {
@@ -142,31 +146,34 @@ class ExportController extends Controller implements HasMiddleware
                 ]);
             }
 
-            $payload = $this->exports->generate($store->id);
-            $json = json_encode($payload, JSON_UNESCAPED_UNICODE);
-            $jsonSize = strlen($json ?: '');
+            // Синхронный запуск в обход unique-lock очереди (ручная кнопка).
+            $job = new SyncStoreToFirebase($store->id, $user?->id);
+            app()->call([$job, 'handle']);
 
-            $this->firebase->updateStore($storeKey, $payload, $tenantId);
+            $latest = SyncLog::query()
+                ->where('store_id', $store->id)
+                ->latest('synced_at')
+                ->first();
 
-            SyncLog::query()->create([
-                'store_id' => $store->id,
-                'tenant_id' => $tenantId,
-                'user_id' => $user?->id,
-                'store_key' => $storeKey,
-                'status' => SyncLog::STATUS_SUCCESS,
-                'json_size' => $jsonSize,
-                'message' => 'Данные успешно отправлены в Firebase Realtime Database.',
-                'synced_at' => now(),
-            ]);
+            if ($latest?->status === SyncLog::STATUS_FAILED) {
+                throw ValidationException::withMessages([
+                    'firebase' => $latest->message ?: 'Синхронизация завершилась с ошибкой.',
+                ]);
+            }
 
-            $message = 'Магазин «'.$storeKey.'» отправлен в Firebase.';
+            if ($latest?->status === SyncLog::STATUS_SKIPPED) {
+                throw ValidationException::withMessages([
+                    'firebase' => $latest->message ?: 'Firebase не настроен.',
+                ]);
+            }
+
+            $message = 'Магазин синхронизирован с Firebase.';
 
             if ($request->expectsJson() || $request->is('api/*')) {
                 return response()->json([
                     'success' => true,
                     'message' => $message,
-                    'store_key' => $storeKey,
-                    'json_size' => $jsonSize,
+                    'latest' => $latest ? $this->transformSyncLog($latest, $user?->timezone ?? 'UTC') : null,
                 ]);
             }
 
@@ -177,17 +184,6 @@ class ExportController extends Controller implements HasMiddleware
             $errorMessage = $exception instanceof ValidationException
                 ? collect($exception->errors())->flatten()->first() ?: $exception->getMessage()
                 : $exception->getMessage();
-
-            SyncLog::query()->create([
-                'store_id' => $store->id,
-                'tenant_id' => $tenantId,
-                'user_id' => $user?->id,
-                'store_key' => $storeKey,
-                'status' => SyncLog::STATUS_FAILED,
-                'json_size' => $jsonSize,
-                'message' => $errorMessage,
-                'synced_at' => now(),
-            ]);
 
             if (! $exception instanceof ValidationException) {
                 $this->notifyExportFailure($errorMessage);
@@ -210,6 +206,27 @@ class ExportController extends Controller implements HasMiddleware
                 ->route('export.index')
                 ->with('error', $errorMessage);
         }
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function transformSyncLog(SyncLog $log, string $timezone): array
+    {
+        return [
+            'id' => $log->id,
+            'store_id' => $log->store_id,
+            'store_name' => is_array($log->store?->name)
+                ? ($log->store->name['ru'] ?? $log->store->name['en'] ?? '')
+                : (string) ($log->store?->name ?? ''),
+            'store_key' => $log->store_key,
+            'status' => $log->status,
+            'json_size' => $log->json_size,
+            'json_size_bytes' => $log->json_size,
+            'message' => $log->message,
+            'error_message' => $log->status === SyncLog::STATUS_FAILED ? $log->message : null,
+            'synced_at' => $log->synced_at?->timezone($timezone)->toIso8601String(),
+        ];
     }
 
     private function notifyExportFailure(string $reason): void

@@ -19,9 +19,6 @@ class NotificationCreated implements ShouldBroadcastNow
         public Notification $notification,
     ) {}
 
-    /**
-     * @return array<int, Channel>
-     */
     public function broadcastOn(): array
     {
         return [
@@ -33,10 +30,6 @@ class NotificationCreated implements ShouldBroadcastNow
     {
         return 'notification.created';
     }
-
-    /**
-     * @return array<string, mixed>
-     */
     public function broadcastWith(): array
     {
         return [

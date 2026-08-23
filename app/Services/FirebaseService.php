@@ -7,6 +7,7 @@ namespace App\Services;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Kreait\Firebase\Contract\Auth as FirebaseAuth;
 use Kreait\Firebase\Contract\Database;
 use Kreait\Firebase\Exception\FirebaseException;
 use Kreait\Firebase\Factory;
@@ -125,21 +126,48 @@ class FirebaseService
         ];
     }
 
-    private function database(?string $tenantId = null): Database
+    public function auth(?string $tenantId = null): FirebaseAuth
+    {
+        return $this->factory($tenantId, requireDatabase: false)->createAuth();
+    }
+
+    public function database(?string $tenantId = null): Database
+    {
+        return $this->factory($tenantId, requireDatabase: true)->createDatabase();
+    }
+
+    public function hasCredentials(?string $tenantId = null): bool
+    {
+        try {
+            return $this->resolveConfig($tenantId)['credentials_path'] !== '';
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    private function factory(?string $tenantId = null, bool $requireDatabase = true): Factory
     {
         $config = $this->resolveConfig($tenantId);
 
-        if ($config['database_url'] === '' || $config['credentials_path'] === '') {
+        if ($config['credentials_path'] === '') {
+            throw new RuntimeException(
+                'Firebase не настроен. Загрузите credentials JSON в Настройки → Интеграции.',
+            );
+        }
+
+        if ($requireDatabase && $config['database_url'] === '') {
             throw new RuntimeException(
                 'Firebase не настроен. Укажите Database URL и загрузите credentials JSON в Настройки → Интеграции.',
             );
         }
 
-        $factory = (new Factory)
-            ->withServiceAccount($config['credentials_path'])
-            ->withDatabaseUri($config['database_url']);
+        $factory = (new Factory)->withServiceAccount($config['credentials_path']);
 
-        return $factory->createDatabase();
+        if ($config['database_url'] !== '') {
+            $factory = $factory->withDatabaseUri($config['database_url']);
+        }
+
+        return $factory;
     }
 
     private function path(string $storeKey): string

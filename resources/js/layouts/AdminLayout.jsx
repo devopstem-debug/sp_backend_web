@@ -23,7 +23,6 @@ import {
     HomeIcon,
     MapIcon,
     ScaleIcon,
-    SparklesIcon,
     Squares2X2Icon,
     TableCellsIcon,
     TagIcon,
@@ -32,15 +31,26 @@ import {
     XMarkIcon,
 } from '@heroicons/react/24/outline';
 import clsx from 'clsx';
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
+
+const SIDEBAR_COLLAPSED_KEY = 'sp.sidebar.collapsed';
+
+function readSidebarCollapsed() {
+    try {
+        return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1';
+    } catch {
+        return false;
+    }
+}
 
 const SECTIONS = [
-    { id: 'main', label: 'Главное' },
-    { id: 'store', label: 'Работа в магазине' },
-    { id: 'data', label: 'Обмен данными' },
-    { id: 'people', label: 'Команда' },
+    { id: 'main', label: 'Обзор' },
+    { id: 'setup', label: 'Сеть' },
+    { id: 'store', label: 'Магазин' },
+    { id: 'catalog', label: 'Выкладка' },
+    { id: 'sync', label: 'Синхронизация' },
     { id: 'billing', label: 'Подписка' },
-    { id: 'platform', label: 'Платформа' },
+    { id: 'platform', label: 'Админ-платформа' },
     { id: 'system', label: 'Система' },
 ];
 
@@ -54,12 +64,25 @@ const navigation = [
         section: 'main',
     },
     {
+        name: 'Арендаторы',
+        href: '/tenants',
+        icon: BuildingOfficeIcon,
+        permission: 'manage-tenants',
+        section: 'setup',
+    },
+    {
+        name: 'Пользователи',
+        href: '/users',
+        icon: UsersIcon,
+        permission: 'view-users',
+        section: 'setup',
+    },
+    {
         name: 'Магазины',
         href: '/stores',
         icon: BuildingStorefrontIcon,
         permission: 'view-stores',
         section: 'store',
-        step: 1,
     },
     {
         name: 'Отделы',
@@ -67,7 +90,6 @@ const navigation = [
         icon: TagIcon,
         permission: 'view-departments',
         section: 'store',
-        step: 2,
     },
     {
         name: 'Стеллажи',
@@ -75,7 +97,6 @@ const navigation = [
         icon: TableCellsIcon,
         permission: 'view-shelves',
         section: 'store',
-        step: 3,
     },
     {
         name: 'Холодильники',
@@ -83,7 +104,6 @@ const navigation = [
         icon: FireIcon,
         permission: 'view-coolers',
         section: 'store',
-        step: 4,
     },
     {
         name: 'Стойки',
@@ -91,52 +111,41 @@ const navigation = [
         icon: CubeTransparentIcon,
         permission: 'view-stands',
         section: 'store',
-        step: 5,
     },
     {
         name: 'Товары',
         href: '/products',
         icon: CubeIcon,
         permission: 'view-products',
-        section: 'store',
-        step: 6,
+        section: 'catalog',
     },
     {
         name: 'Планограммы',
         href: '/planograms',
         icon: Squares2X2Icon,
         permission: 'view-planograms',
-        section: 'store',
-        step: 7,
+        section: 'catalog',
     },
     {
         name: 'Карта зала',
         href: '/floor-plan',
         icon: MapIcon,
         permission: 'view-planograms',
-        section: 'store',
-        step: 8,
+        section: 'catalog',
     },
     {
         name: 'Импорт',
         href: '/import',
         icon: ArrowUpTrayIcon,
         permission: 'import-products',
-        section: 'data',
+        section: 'sync',
     },
     {
         name: 'Экспорт',
         href: '/export',
         icon: ArrowDownTrayIcon,
         permission: 'view-export',
-        section: 'data',
-    },
-    {
-        name: 'Пользователи',
-        href: '/users',
-        icon: UsersIcon,
-        permission: 'view-users',
-        section: 'people',
+        section: 'sync',
     },
     {
         name: 'Оплата',
@@ -145,13 +154,6 @@ const navigation = [
         permission: 'manage-billing',
         tenantOnly: true,
         section: 'billing',
-    },
-    {
-        name: 'Арендаторы',
-        href: '/tenants',
-        icon: BuildingOfficeIcon,
-        permission: 'manage-tenants',
-        section: 'platform',
     },
     {
         name: 'Тарифы',
@@ -203,22 +205,6 @@ const navigation = [
         section: 'system',
     },
 ];
-
-const MOTIVATION = [
-    'Каждая полка — это продажа.',
-    'Сегодня идеальный день для точной планограммы.',
-    'Порядок на стеллаже приносит порядок в кассе.',
-    'Маленький шаг сегодня — ровный магазин завтра.',
-    'Вы уже ближе к идеальной выкладке.',
-    'Хорошая планограмма работает, пока вы отдыхаете.',
-    'Соберите магазин как витрину, которой гордитесь.',
-];
-
-function motivationForToday() {
-    const day = new Date().getDay();
-
-    return MOTIVATION[day % MOTIVATION.length];
-}
 
 function isNavActive(currentUrl, href) {
     const path = currentUrl.split('?')[0];
@@ -300,19 +286,9 @@ function SidebarNav({ currentUrl, onNavigate, groups }) {
                                             )}
                                         />
                                     </span>
-                                    <span className="min-w-0 flex-1 truncate">{item.name}</span>
-                                    {item.step ? (
-                                        <span
-                                            className={clsx(
-                                                'flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold',
-                                                active
-                                                    ? 'bg-white/20 text-white'
-                                                    : 'bg-slate-800 text-slate-500 group-hover:bg-indigo-500/20 group-hover:text-indigo-200',
-                                            )}
-                                        >
-                                            {item.step}
-                                        </span>
-                                    ) : null}
+                                    <span className="min-w-0 flex-1 truncate">
+                                        {item.name}
+                                    </span>
                                 </Link>
                             );
                         })}
@@ -323,19 +299,6 @@ function SidebarNav({ currentUrl, onNavigate, groups }) {
     );
 }
 
-function SidebarMotivate() {
-    const quote = useMemo(() => motivationForToday(), []);
-
-    return (
-        <div className="sidebar-motivate mx-3 mb-4 rounded-2xl border border-indigo-500/20 bg-gradient-to-br from-indigo-500/15 via-slate-900 to-violet-500/10 p-3">
-            <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-indigo-300">
-                <SparklesIcon className="h-4 w-4" />
-                На сегодня
-            </div>
-            <p className="text-xs leading-relaxed text-slate-300">{quote}</p>
-        </div>
-    );
-}
 
 function SidebarShell({ currentUrl, onNavigate, groups, extraHeader }) {
     return (
@@ -346,7 +309,6 @@ function SidebarShell({ currentUrl, onNavigate, groups, extraHeader }) {
                 onNavigate={onNavigate}
                 groups={groups}
             />
-            <SidebarMotivate />
         </>
     );
 }
@@ -366,9 +328,35 @@ export default function AdminLayout({ header, children, flush = false }) {
     );
     const groups = groupNavigation(items);
 
-    const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [mobileOpen, setMobileOpen] = useState(false);
+    const [desktopCollapsed, setDesktopCollapsed] = useState(() =>
+        typeof window === 'undefined' ? false : readSidebarCollapsed(),
+    );
 
-    const closeSidebar = () => setSidebarOpen(false);
+    useEffect(() => {
+        try {
+            window.localStorage.setItem(
+                SIDEBAR_COLLAPSED_KEY,
+                desktopCollapsed ? '1' : '0',
+            );
+        } catch {
+            // ignore quota / private mode
+        }
+    }, [desktopCollapsed]);
+
+    const closeMobileSidebar = () => setMobileOpen(false);
+
+    const toggleSidebar = () => {
+        if (
+            typeof window !== 'undefined' &&
+            window.matchMedia('(min-width: 1024px)').matches
+        ) {
+            setDesktopCollapsed((value) => !value);
+            return;
+        }
+
+        setMobileOpen(true);
+    };
 
     return (
         <div
@@ -381,29 +369,29 @@ export default function AdminLayout({ header, children, flush = false }) {
             <div
                 className={clsx(
                     'fixed inset-0 z-40 bg-gray-900/80 transition-opacity lg:hidden',
-                    sidebarOpen
+                    mobileOpen
                         ? 'opacity-100'
                         : 'pointer-events-none opacity-0',
                 )}
-                onClick={closeSidebar}
+                onClick={closeMobileSidebar}
                 aria-hidden="true"
             />
 
             <div
                 className={clsx(
                     'fixed inset-y-0 left-0 z-50 flex w-72 flex-col bg-slate-900 transition-transform duration-300 ease-in-out lg:hidden',
-                    sidebarOpen ? 'translate-x-0' : '-translate-x-full',
+                    mobileOpen ? 'translate-x-0' : '-translate-x-full',
                 )}
             >
                 <SidebarShell
                     currentUrl={url}
-                    onNavigate={closeSidebar}
+                    onNavigate={closeMobileSidebar}
                     groups={groups}
                     extraHeader={
                         <div className="flex h-16 shrink-0 items-center justify-between px-4">
                             <Link
                                 href="/dashboard"
-                                onClick={closeSidebar}
+                                onClick={closeMobileSidebar}
                                 className="flex items-center gap-2"
                             >
                                 <ApplicationLogo className="block h-8 w-auto text-white" />
@@ -413,7 +401,7 @@ export default function AdminLayout({ header, children, flush = false }) {
                             </Link>
                             <button
                                 type="button"
-                                onClick={closeSidebar}
+                                onClick={closeMobileSidebar}
                                 className="rounded-md p-2 text-slate-400 hover:bg-slate-800 hover:text-white focus:outline-none"
                             >
                                 <span className="sr-only">Закрыть меню</span>
@@ -424,36 +412,76 @@ export default function AdminLayout({ header, children, flush = false }) {
                 />
             </div>
 
-            <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col border-r border-white/5 bg-slate-900 lg:flex">
-                <SidebarShell
-                    currentUrl={url}
-                    groups={groups}
-                    extraHeader={
-                        <div className="flex h-16 shrink-0 items-center gap-2 px-6">
-                            <Link
-                                href="/dashboard"
-                                className="flex items-center gap-2"
-                            >
-                                <ApplicationLogo className="block h-8 w-auto text-white" />
-                                <span className="text-sm font-semibold text-white">
-                                    Smart Planogram
-                                </span>
-                            </Link>
-                        </div>
-                    }
-                />
+            <aside
+                className={clsx(
+                    'fixed inset-y-0 left-0 z-30 hidden flex-col overflow-hidden border-r border-white/5 bg-slate-900 transition-[width] duration-300 ease-in-out lg:flex',
+                    desktopCollapsed ? 'w-0 border-transparent' : 'w-64',
+                )}
+                aria-hidden={desktopCollapsed}
+            >
+                <div
+                    className={clsx(
+                        'flex h-full w-64 flex-col transition-opacity duration-200',
+                        desktopCollapsed
+                            ? 'pointer-events-none opacity-0'
+                            : 'opacity-100',
+                    )}
+                >
+                    <SidebarShell
+                        currentUrl={url}
+                        groups={groups}
+                        extraHeader={
+                            <div className="flex h-16 shrink-0 items-center justify-between gap-2 px-4">
+                                <Link
+                                    href="/dashboard"
+                                    className="flex min-w-0 items-center gap-2"
+                                >
+                                    <ApplicationLogo className="block h-8 w-auto shrink-0 text-white" />
+                                    <span className="truncate text-sm font-semibold text-white">
+                                        Smart Planogram
+                                    </span>
+                                </Link>
+                                <button
+                                    type="button"
+                                    onClick={() => setDesktopCollapsed(true)}
+                                    className="rounded-md p-2 text-slate-400 hover:bg-slate-800 hover:text-white focus:outline-none"
+                                    title="Скрыть меню"
+                                >
+                                    <span className="sr-only">Скрыть меню</span>
+                                    <Bars3Icon className="h-5 w-5" aria-hidden="true" />
+                                </button>
+                            </div>
+                        }
+                    />
+                </div>
             </aside>
 
-            <div className="lg:pl-64">
+            <div
+                className={clsx(
+                    'transition-[padding] duration-300 ease-in-out',
+                    desktopCollapsed ? 'lg:pl-0' : 'lg:pl-64',
+                )}
+            >
                 <header className="sticky top-0 z-20 border-b border-slate-800 bg-[#0e172b]/90 backdrop-blur">
                     <div className="flex h-16 items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
-                        <div className="flex min-w-0 flex-1 items-center gap-4">
+                        <div className="flex min-w-0 flex-1 items-center gap-3">
                             <button
                                 type="button"
-                                onClick={() => setSidebarOpen(true)}
-                                className="rounded-md p-2 text-slate-400 hover:bg-slate-800 hover:text-white focus:outline-none lg:hidden"
+                                onClick={toggleSidebar}
+                                className="rounded-md p-2 text-slate-400 hover:bg-slate-800 hover:text-white focus:outline-none"
+                                title={
+                                    desktopCollapsed
+                                        ? 'Показать меню'
+                                        : 'Скрыть меню'
+                                }
+                                aria-expanded={!desktopCollapsed}
+                                aria-controls="admin-sidebar"
                             >
-                                <span className="sr-only">Открыть меню</span>
+                                <span className="sr-only">
+                                    {desktopCollapsed
+                                        ? 'Показать меню'
+                                        : 'Скрыть или открыть меню'}
+                                </span>
                                 <Bars3Icon className="h-6 w-6" aria-hidden="true" />
                             </button>
 

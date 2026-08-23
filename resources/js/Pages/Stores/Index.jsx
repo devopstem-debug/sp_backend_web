@@ -9,7 +9,7 @@ import {
 import { useEffect, useState } from 'react';
 import AdminLayout from '@/layouts/AdminLayout';
 import { useCan } from '@/lib/permissions';
-import { fireConfirm, fireError, fireSuccess } from '@/lib/swal';
+import { fireConfirm, fireError, fireSuccess, fireToast } from '@/lib/swal';
 import clsx from 'clsx';
 
 const STATUS_LABELS = {
@@ -42,10 +42,10 @@ function formatDate(value) {
     }
 }
 
-export default function Index({ stores, filters, trashedCount = 0 }) {
+export default function Index({ stores, filters, trashedCount = 0, quota = null }) {
     const { flash } = usePage().props;
     const can = useCan();
-    const canCreate = can('create-stores');
+    const canCreate = can('create-stores') && (quota ? quota.can_add : true);
     const canEdit = can('edit-stores');
     const canDelete = can('delete-stores');
     const canRestore = can('restore-stores');
@@ -59,6 +59,9 @@ export default function Index({ stores, filters, trashedCount = 0 }) {
         }
         if (flash?.error) {
             fireError(flash.error);
+        }
+        if (flash?.warning) {
+            fireToast('warning', flash.warning);
         }
     }, [flash]);
 
@@ -193,7 +196,7 @@ export default function Index({ stores, filters, trashedCount = 0 }) {
                         )}
                     </div>
 
-                    {!trashed && canCreate && (
+                    {!trashed && canCreate ? (
                         <Link
                             href={route('stores.create')}
                             className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500"
@@ -201,8 +204,37 @@ export default function Index({ stores, filters, trashedCount = 0 }) {
                             <PlusIcon className="h-5 w-5" aria-hidden="true" />
                             Добавить
                         </Link>
-                    )}
+                    ) : null}
+
+                    {!trashed && can('create-stores') && quota && !quota.can_add ? (
+                        <button
+                            type="button"
+                            onClick={() =>
+                                fireError(
+                                    quota.message ||
+                                        'Лимит магазинов по тарифу исчерпан.',
+                                )
+                            }
+                            className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-600 px-4 py-2 text-sm font-semibold text-slate-400"
+                        >
+                            Лимит исчерпан
+                            {quota ? ` (${quota.used}/${quota.max})` : ''}
+                        </button>
+                    ) : null}
                 </div>
+
+                {quota && !quota.can_add ? (
+                    <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+                        {quota.message}
+                    </div>
+                ) : quota ? (
+                    <p className="text-xs text-slate-500">
+                        Лимит тарифа:{' '}
+                        <span className="font-medium text-slate-300">
+                            {quota.used} / {quota.max} магазинов
+                        </span>
+                    </p>
+                ) : null}
 
                 <div className="rounded-xl bg-[#152033] p-4 shadow-sm ring-1 ring-slate-800">
                     <div className="flex flex-col gap-3 md:flex-row md:items-end">

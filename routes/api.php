@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\V1\DepartmentController;
 use App\Http\Controllers\Api\V1\ProductController;
 use App\Http\Controllers\Api\V1\StoreController;
+use App\Http\Controllers\Api\V1\SyncStatusController;
 use App\Http\Controllers\ChatController;
 use App\Http\Controllers\ExportController;
 use App\Http\Controllers\NotificationController;
@@ -18,6 +19,9 @@ Route::prefix('v1')
 
         Route::get('export/{storeId}', [ExportController::class, 'generate'])
             ->name('export.show');
+
+        Route::get('sync/status', SyncStatusController::class)
+            ->name('sync.status');
 
         Route::get('notifications/unread-count', [NotificationController::class, 'unreadCount'])
             ->name('notifications.unread-count');

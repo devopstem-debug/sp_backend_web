@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AccountStatusController;
+use App\Http\Controllers\AnalyticsController;
 use App\Http\Controllers\BillingController;
 use App\Http\Controllers\ChatController;
 use App\Http\Controllers\ChatPageController;
@@ -57,6 +58,8 @@ Route::middleware(['auth', 'user.active', 'tenant.active'])->group(function () {
 
 Route::middleware(['auth', 'user.active', 'tenant.active', 'subscription.active'])->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+    Route::get('/analytics', [AnalyticsController::class, 'index'])->name('analytics.index');
+
     Route::get('chat', [ChatPageController::class, 'index'])->name('chat.index');
     Route::get('chat/conversations', [ChatController::class, 'conversations'])->name('chat.conversations');
     Route::get('chat/users', [ChatController::class, 'users'])->name('chat.users');

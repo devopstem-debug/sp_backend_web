@@ -1,14 +1,15 @@
 import { Head, Link, router, usePage } from '@inertiajs/react';
 import {
     ArrowDownTrayIcon,
+    ArrowPathIcon,
     CloudArrowUpIcon,
     DocumentTextIcon,
 } from '@heroicons/react/24/outline';
 import axios from 'axios';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import AdminLayout from '@/layouts/AdminLayout';
 import { useCan } from '@/lib/permissions';
-import { fireError, fireSuccess } from '@/lib/swal';
+import { fireError, fireSuccess, fireToast } from '@/lib/swal';
 import clsx from 'clsx';
 
 function formatBytes(bytes) {
@@ -41,10 +42,57 @@ function formatDate(value) {
     }
 }
 
+function formatRelative(value) {
+    if (!value) {
+        return 'ещё не было';
+    }
+
+    const date = new Date(value);
+    const diffSec = Math.round((Date.now() - date.getTime()) / 1000);
+
+    if (Number.isNaN(diffSec)) {
+        return formatDate(value);
+    }
+
+    if (diffSec < 60) {
+        return 'только что';
+    }
+
+    if (diffSec < 3600) {
+        const minutes = Math.floor(diffSec / 60);
+
+        return `${minutes} мин. назад`;
+    }
+
+    if (diffSec < 86400) {
+        const hours = Math.floor(diffSec / 3600);
+
+        return `${hours} ч. назад`;
+    }
+
+    return formatDate(value);
+}
+
+function statusLabel(status) {
+    if (status === 'success') {
+        return 'успешно';
+    }
+    if (status === 'failed') {
+        return 'ошибка';
+    }
+    if (status === 'skipped') {
+        return 'пропущено';
+    }
+
+    return status || '—';
+}
+
 export default function Index({
     stores = [],
     firebaseConfigured = false,
     recentSyncs = [],
+    latestByStore = {},
+    autoSyncEnabled = true,
 }) {
     const { flash } = usePage().props;
     const can = useCan();
@@ -53,16 +101,17 @@ export default function Index({
     const [loading, setLoading] = useState(false);
     const [sending, setSending] = useState(false);
     const [generatedAt, setGeneratedAt] = useState(null);
-    const [lastFirebaseStatus, setLastFirebaseStatus] = useState(null);
+    const [syncLogs, setSyncLogs] = useState(recentSyncs);
+    const [latestMap, setLatestMap] = useState(latestByStore);
+    const [configured, setConfigured] = useState(firebaseConfigured);
+    const seenSyncIds = useRef(new Set(recentSyncs.map((item) => item.id)));
 
     useEffect(() => {
         if (flash?.success) {
             fireSuccess(flash.success);
-            setLastFirebaseStatus('success');
         }
         if (flash?.error) {
             fireError(flash.error);
-            setLastFirebaseStatus('error');
         }
     }, [flash]);
 
@@ -70,6 +119,72 @@ export default function Index({
         () => stores.find((store) => store.id === storeId) || null,
         [stores, storeId],
     );
+
+    const latestForStore = storeId ? latestMap[storeId] || null : null;
+
+    useEffect(() => {
+        if (!autoSyncEnabled || !can('view-export')) {
+            return undefined;
+        }
+
+        let cancelled = false;
+
+        const poll = async () => {
+            try {
+                const params = storeId ? { store_id: storeId } : {};
+                const response = await axios.get('/api/v1/sync/status', { params });
+                if (cancelled) {
+                    return;
+                }
+
+                const data = response.data || {};
+                setConfigured(Boolean(data.firebase_configured));
+
+                if (Array.isArray(data.recent)) {
+                    setSyncLogs(data.recent);
+
+                    data.recent.forEach((log) => {
+                        if (!log?.id || seenSyncIds.current.has(log.id)) {
+                            return;
+                        }
+
+                        seenSyncIds.current.add(log.id);
+
+                        if (log.status === 'success') {
+                            fireToast(
+                                'success',
+                                `Синхронизация: ${log.store_name || log.store_key || 'магазин'}`,
+                            );
+                        } else if (log.status === 'failed') {
+                            fireToast(
+                                'error',
+                                log.error_message ||
+                                    log.message ||
+                                    'Ошибка синхронизации Firebase',
+                            );
+                        }
+                    });
+                }
+
+                if (data.latest?.store_id) {
+                    setLatestMap((prev) => ({
+                        ...prev,
+                        [data.latest.store_id]: data.latest,
+                    }));
+                }
+            } catch {
+                // polling failures are silent
+            }
+        };
+
+        poll();
+        const timer = window.setInterval(poll, 30000);
+
+        return () => {
+            cancelled = true;
+            window.clearInterval(timer);
+        };
+    }, [autoSyncEnabled, can, storeId]);
 
     const generate = async () => {
         if (!storeId) {
@@ -104,13 +219,13 @@ export default function Index({
         window.location.href = route('export.download', storeId);
     };
 
-    const sendFirebase = () => {
+    const syncNow = () => {
         if (!storeId) {
             fireError('Выберите магазин.');
             return;
         }
 
-        if (!firebaseConfigured) {
+        if (!configured) {
             fireError(
                 'Firebase не настроен. Откройте Настройки → Интеграции и укажите Database URL + credentials JSON.',
             );
@@ -118,7 +233,6 @@ export default function Index({
         }
 
         setSending(true);
-        setLastFirebaseStatus('pending');
 
         router.post(
             route('export.firebase', storeId),
@@ -126,14 +240,13 @@ export default function Index({
             {
                 preserveScroll: true,
                 onSuccess: () => {
-                    setLastFirebaseStatus('success');
+                    fireToast('success', 'Синхронизация выполнена');
                 },
                 onError: (errors) => {
-                    setLastFirebaseStatus('error');
                     fireError(
                         errors.firebase ||
                             errors.store_id ||
-                            'Не удалось отправить данные в Firebase.',
+                            'Не удалось синхронизировать с Firebase.',
                     );
                 },
                 onFinish: () => setSending(false),
@@ -155,20 +268,54 @@ export default function Index({
                 <div className="rounded-xl bg-[#152033] p-4 shadow-sm ring-1 ring-slate-800 sm:p-6">
                     <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                         <p className="text-sm text-slate-400">
-                            Генерация JSON для C++ движка и синхронизация с Firebase
-                            Realtime Database.
+                            Автосинхронизация с Firebase при изменении магазинов,
+                            оборудования и планограмм. Очередь:{' '}
+                            <code className="text-slate-300">php artisan queue:work</code>
                         </p>
                         <span
                             className={clsx(
                                 'inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset',
-                                firebaseConfigured
+                                configured
                                     ? 'bg-emerald-500/10 text-emerald-300 ring-emerald-500/30'
                                     : 'bg-amber-500/10 text-amber-300 ring-amber-500/30',
                             )}
                         >
-                            Firebase:{' '}
-                            {firebaseConfigured ? 'настроен' : 'не настроен'}
+                            Firebase: {configured ? 'настроен' : 'не настроен'}
                         </span>
+                    </div>
+
+                    <div className="mb-4 rounded-lg border border-slate-700/80 bg-[#0e172b] px-3 py-3 text-sm text-slate-300">
+                        <div className="flex flex-wrap items-center gap-2">
+                            <ArrowPathIcon className="h-4 w-4 text-cyan-400" />
+                            <span className="font-medium text-slate-100">
+                                Последняя синхронизация:
+                            </span>
+                            <span>
+                                {latestForStore
+                                    ? `${formatRelative(latestForStore.synced_at)}`
+                                    : 'ещё не было'}
+                            </span>
+                            {latestForStore?.status === 'success' && (
+                                <span className="text-emerald-300">✅</span>
+                            )}
+                            {latestForStore?.status === 'failed' && (
+                                <span className="text-red-300">❌</span>
+                            )}
+                            {latestForStore?.status && (
+                                <span className="text-xs text-slate-500">
+                                    ({statusLabel(latestForStore.status)}
+                                    {latestForStore.json_size
+                                        ? `, ${formatBytes(latestForStore.json_size)}`
+                                        : ''}
+                                    )
+                                </span>
+                            )}
+                        </div>
+                        {latestForStore?.error_message && (
+                            <p className="mt-1 text-xs text-red-300">
+                                {latestForStore.error_message}
+                            </p>
+                        )}
                     </div>
 
                     <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
@@ -186,7 +333,6 @@ export default function Index({
                                     setStoreId(e.target.value);
                                     setJsonPreview('');
                                     setGeneratedAt(null);
-                                    setLastFirebaseStatus(null);
                                 }}
                                 className="block w-full rounded-lg border-slate-700 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
                             >
@@ -235,33 +381,33 @@ export default function Index({
                             {can('firebase-export') && (
                                 <button
                                     type="button"
-                                    onClick={sendFirebase}
+                                    onClick={syncNow}
                                     disabled={sending || !storeId}
                                     title={
-                                        firebaseConfigured
-                                            ? 'Отправить JSON в Realtime Database'
+                                        configured
+                                            ? 'Принудительная синхронизация сейчас'
                                             : 'Сначала настройте Firebase в Интеграциях'
                                     }
                                     className={clsx(
                                         'inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold shadow-sm disabled:cursor-not-allowed disabled:opacity-60',
-                                        firebaseConfigured
+                                        configured
                                             ? 'bg-cyan-600 text-white hover:bg-cyan-500'
                                             : 'border border-slate-700 bg-[#1a2740] text-slate-300 hover:bg-slate-800',
                                     )}
                                 >
                                     <CloudArrowUpIcon className="h-4 w-4" />
                                     {sending
-                                        ? 'Отправка…'
-                                        : 'Отправить в Firebase'}
+                                        ? 'Синхронизация…'
+                                        : 'Синхронизировать сейчас'}
                                 </button>
                             )}
                         </div>
                     </div>
 
-                    {!firebaseConfigured && (
+                    {!configured && (
                         <p className="mt-3 text-sm text-amber-300/90">
-                            Чтобы отправлять данные, заполните Project ID, Database
-                            URL и загрузите service account JSON в{' '}
+                            Чтобы синхронизировать данные, заполните Project ID,
+                            Database URL и загрузите service account JSON в{' '}
                             <Link
                                 href="/settings?tab=integrations"
                                 className="underline hover:text-amber-200"
@@ -272,29 +418,14 @@ export default function Index({
                         </p>
                     )}
 
-                    {(generatedAt || lastFirebaseStatus) && (
-                        <div className="mt-3 flex flex-wrap gap-4 text-xs text-slate-400">
-                            {generatedAt && <span>updatedAt: {generatedAt}</span>}
-                            {lastFirebaseStatus === 'pending' && (
-                                <span className="text-cyan-300">
-                                    Firebase: отправка…
-                                </span>
-                            )}
-                            {lastFirebaseStatus === 'success' && (
-                                <span className="text-emerald-300">
-                                    Firebase: успешно
-                                </span>
-                            )}
-                            {lastFirebaseStatus === 'error' && (
-                                <span className="text-red-300">
-                                    Firebase: ошибка
-                                </span>
-                            )}
+                    {generatedAt && (
+                        <div className="mt-3 text-xs text-slate-400">
+                            updatedAt preview: {generatedAt}
                         </div>
                     )}
                 </div>
 
-                {recentSyncs.length > 0 && (
+                {syncLogs.length > 0 && (
                     <div className="overflow-hidden rounded-xl bg-[#152033] shadow-sm ring-1 ring-slate-800">
                         <div className="border-b border-slate-800 px-4 py-3 sm:px-6">
                             <h2 className="text-sm font-semibold text-white">
@@ -320,7 +451,7 @@ export default function Index({
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-800">
-                                    {recentSyncs.map((log) => (
+                                    {syncLogs.map((log) => (
                                         <tr key={log.id}>
                                             <td className="px-4 py-2 text-sm text-slate-200">
                                                 <div>{log.store_name || '—'}</div>
@@ -334,17 +465,25 @@ export default function Index({
                                                         'inline-flex rounded-full px-2 py-0.5 text-xs font-medium',
                                                         log.status === 'success'
                                                             ? 'bg-emerald-500/15 text-emerald-300'
-                                                            : 'bg-red-500/15 text-red-300',
+                                                            : log.status ===
+                                                                'skipped'
+                                                              ? 'bg-amber-500/15 text-amber-300'
+                                                              : 'bg-red-500/15 text-red-300',
                                                     )}
                                                 >
-                                                    {log.status}
+                                                    {statusLabel(log.status)}
                                                 </span>
                                             </td>
                                             <td className="px-4 py-2 text-sm text-slate-300">
                                                 {formatBytes(log.json_size)}
                                             </td>
                                             <td className="px-4 py-2 text-sm text-slate-400">
-                                                {formatDate(log.synced_at)}
+                                                <div>
+                                                    {formatRelative(log.synced_at)}
+                                                </div>
+                                                <div className="text-xs text-slate-500">
+                                                    {formatDate(log.synced_at)}
+                                                </div>
                                             </td>
                                         </tr>
                                     ))}
