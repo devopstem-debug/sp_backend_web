@@ -57,7 +57,6 @@ Route::middleware(['auth', 'user.active', 'tenant.active'])->group(function () {
 
 Route::middleware(['auth', 'user.active', 'tenant.active', 'subscription.active'])->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
-
     Route::get('chat', [ChatPageController::class, 'index'])->name('chat.index');
     Route::get('chat/conversations', [ChatController::class, 'conversations'])->name('chat.conversations');
     Route::get('chat/users', [ChatController::class, 'users'])->name('chat.users');
@@ -128,10 +127,16 @@ Route::middleware(['auth', 'user.active', 'tenant.active', 'subscription.active'
         ->name('stores.force-delete');
     Route::resource('stores', StoreController::class)->except(['show']);
 
+    Route::post('products/approve-unchecked', [ProductController::class, 'approveUnchecked'])
+        ->name('products.approve-unchecked');
+    Route::post('products/{product}/approve', [ProductController::class, 'approve'])
+        ->name('products.approve');
     Route::post('products/{id}/restore', [ProductController::class, 'restore'])
         ->name('products.restore');
     Route::delete('products/{id}/force', [ProductController::class, 'forceDelete'])
         ->name('products.force-delete');
+    Route::get('products/barcode-lookup', [ProductController::class, 'lookupBarcode'])
+        ->name('products.barcode-lookup');
     Route::resource('products', ProductController::class)->except(['show']);
 
     Route::post('departments/{id}/restore', [DepartmentController::class, 'restore'])

@@ -10,8 +10,8 @@ import TenantForm, {
 export default function Create({ plans = [] }) {
     const [clientErrors, setClientErrors] = useState({});
 
-    const { data, setData, post, processing, errors, transform } = useForm(
-        buildTenantFormData(),
+    const { data, setData, post, processing, errors } = useForm(
+        buildTenantFormData(null, plans),
     );
 
     const submit = (e) => {
@@ -24,13 +24,6 @@ export default function Create({ plans = [] }) {
             fireError('Исправьте ошибки в форме.');
             return;
         }
-
-        transform((form) => ({
-            ...form,
-            max_stores: Number(form.max_stores),
-            max_users: Number(form.max_users),
-            subscription_until: form.subscription_until || null,
-        }));
 
         post(route('tenants.store'), {
             onSuccess: () => fireSuccess('Арендатор создан.'),

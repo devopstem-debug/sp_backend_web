@@ -1,4 +1,5 @@
 import { Link } from '@inertiajs/react';
+import { useMemo } from 'react';
 
 function FieldError({ message }) {
     if (!message) {
@@ -16,14 +17,13 @@ function inputClass(hasError) {
     }`;
 }
 
-export function buildTenantFormData(tenant = null) {
+export function buildTenantFormData(tenant = null, plans = []) {
+    const defaultPlan = tenant?.plan || plans[0]?.value || 'basic';
+
     return {
         name: tenant?.name ?? '',
         domain: tenant?.domain ?? '',
-        plan: tenant?.plan ?? 'basic',
-        max_stores: tenant?.max_stores ?? 5,
-        max_users: tenant?.max_users ?? 20,
-        subscription_until: tenant?.subscription_until ?? '',
+        plan: defaultPlan,
     };
 }
 
@@ -42,16 +42,6 @@ export function validateTenantForm(data) {
         errors.plan = 'Выберите тариф.';
     }
 
-    const maxStores = Number(data.max_stores);
-    if (!Number.isInteger(maxStores) || maxStores < 1) {
-        errors.max_stores = 'Укажите лимит магазинов.';
-    }
-
-    const maxUsers = Number(data.max_users);
-    if (!Number.isInteger(maxUsers) || maxUsers < 1) {
-        errors.max_users = 'Укажите лимит пользователей.';
-    }
-
     return errors;
 }
 
@@ -67,6 +57,11 @@ export default function TenantForm({
     cancelHref,
 }) {
     const fieldError = (name) => errors?.[name] || clientErrors?.[name];
+
+    const selectedPlan = useMemo(
+        () => plans.find((plan) => plan.value === data.plan) ?? null,
+        [plans, data.plan],
+    );
 
     return (
         <form
@@ -123,60 +118,32 @@ export default function TenantForm({
                 <FieldError message={fieldError('plan')} />
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                    <label
-                        htmlFor="max_stores"
-                        className="block text-sm font-medium text-slate-200"
-                    >
-                        Max магазинов
-                    </label>
-                    <input
-                        id="max_stores"
-                        type="number"
-                        min={1}
-                        value={data.max_stores}
-                        onChange={(e) => setData('max_stores', e.target.value)}
-                        className={inputClass(Boolean(fieldError('max_stores')))}
-                    />
-                    <FieldError message={fieldError('max_stores')} />
+            {selectedPlan ? (
+                <div className="rounded-lg border border-slate-700 bg-slate-900/50 px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Условия тарифа
+                    </p>
+                    <dl className="mt-3 grid gap-3 sm:grid-cols-2">
+                        <div>
+                            <dt className="text-xs text-slate-500">Магазины</dt>
+                            <dd className="mt-0.5 text-sm font-medium text-white">
+                                {selectedPlan.max_stores}
+                            </dd>
+                        </div>
+                        <div>
+                            <dt className="text-xs text-slate-500">Пользователи</dt>
+                            <dd className="mt-0.5 text-sm font-medium text-white">
+                                {selectedPlan.max_users}
+                            </dd>
+                        </div>
+                    </dl>
+                    <p className="mt-3 text-xs text-slate-500">
+                        Каталог товаров общий для всех арендаторов и не ограничивается
+                        тарифом. Лимиты магазинов/пользователей и срок подписки берутся
+                        из тарифа автоматически.
+                    </p>
                 </div>
-
-                <div>
-                    <label
-                        htmlFor="max_users"
-                        className="block text-sm font-medium text-slate-200"
-                    >
-                        Max пользователей
-                    </label>
-                    <input
-                        id="max_users"
-                        type="number"
-                        min={1}
-                        value={data.max_users}
-                        onChange={(e) => setData('max_users', e.target.value)}
-                        className={inputClass(Boolean(fieldError('max_users')))}
-                    />
-                    <FieldError message={fieldError('max_users')} />
-                </div>
-            </div>
-
-            <div>
-                <label
-                    htmlFor="subscription_until"
-                    className="block text-sm font-medium text-slate-200"
-                >
-                    Срок подписки
-                </label>
-                <input
-                    id="subscription_until"
-                    type="date"
-                    value={data.subscription_until || ''}
-                    onChange={(e) => setData('subscription_until', e.target.value)}
-                    className={inputClass(Boolean(fieldError('subscription_until')))}
-                />
-                <FieldError message={fieldError('subscription_until')} />
-            </div>
+            ) : null}
 
             <div className="flex flex-wrap items-center gap-3">
                 <button

@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
-use App\Models\Concerns\BelongsToTenant;
+use App\Models\Concerns\BelongsToProductCatalog;
 use Database\Factories\ProductFactory;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -17,10 +17,10 @@ use Spatie\Activitylog\Support\LogOptions;
 class Product extends Model
 {
     /** @use HasFactory<ProductFactory> */
-    use BelongsToTenant, HasFactory, HasUuids, LogsActivity, SoftDeletes;
+    use BelongsToProductCatalog, HasFactory, HasUuids, LogsActivity, SoftDeletes;
 
     protected $fillable = [
-        'tenant_id',
+        'owner_tenant_id',
         'barcode',
         'name',
         'category',
@@ -45,9 +45,9 @@ class Product extends Model
         ];
     }
 
-    public function tenant(): BelongsTo
+    public function ownerTenant(): BelongsTo
     {
-        return $this->belongsTo(Tenant::class);
+        return $this->belongsTo(Tenant::class, 'owner_tenant_id');
     }
 
     public function getActivitylogOptions(): LogOptions

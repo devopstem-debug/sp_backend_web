@@ -154,7 +154,7 @@ export default function Index({
                                                 {formatMoney(plan.price_monthly)} / {formatMoney(plan.price_yearly)}
                                             </td>
                                             <td className="px-4 py-3 text-slate-300">
-                                                {plan.max_stores} маг. · {plan.max_users} польз. · {plan.max_products} тов.
+                                                {plan.max_stores} маг. · {plan.max_users} польз.
                                             </td>
                                             <td className="px-4 py-3">
                                                 <span

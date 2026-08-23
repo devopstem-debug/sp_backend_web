@@ -37,6 +37,7 @@ export function buildProductFormData(product = null) {
         depth_mm: product?.depth_mm ?? '',
         weight_g: product?.weight_g ?? '',
         checked: Boolean(product?.checked),
+        is_private: Boolean(product?.is_private),
     };
 }
 
@@ -52,10 +53,6 @@ export function validateProductForm(data) {
 
     if (!String(data.name || '').trim()) {
         errors.name = 'Укажите название товара.';
-    }
-
-    if (!String(data.category || '').trim()) {
-        errors.category = 'Укажите категорию.';
     }
 
     for (const field of [
@@ -86,19 +83,29 @@ export default function ProductForm({
     processing = false,
     submitLabel = 'Сохранить',
     onSubmit,
+    barcodeLocked = false,
+    footerLeft = null,
+    allowPrivate = false,
+    showCatalogHint = true,
 }) {
     const err = (key) => clientErrors[key] || errors[key];
 
     return (
         <form onSubmit={onSubmit} className="space-y-6" noValidate>
             <div className="rounded-xl bg-[#152033] p-6 shadow-sm ring-1 ring-slate-800">
+                {showCatalogHint ? (
+                    <p className="mb-5 rounded-lg border border-slate-700/80 bg-slate-900/40 px-3 py-2 text-xs text-slate-400">
+                        Каталог общий для всех арендаторов (Coca-Cola, и т.п.).
+                        Отметьте «Свой бренд», только если товар уникален для вашей сети.
+                    </p>
+                ) : null}
                 <div className="grid gap-5 sm:grid-cols-2">
                     <div>
                         <label
                             htmlFor="barcode"
                             className="block text-sm font-medium text-slate-200"
                         >
-                            Штрихкод (EAN-13)
+                            Штрихкод (EAN-13) <span className="text-red-400">*</span>
                         </label>
                         <input
                             id="barcode"
@@ -106,13 +113,16 @@ export default function ProductForm({
                             inputMode="numeric"
                             maxLength={13}
                             value={data.barcode}
+                            readOnly={barcodeLocked}
                             onChange={(e) =>
                                 setData(
                                     'barcode',
                                     e.target.value.replace(/\D/g, '').slice(0, 13),
                                 )
                             }
-                            className={inputClass(err('barcode'))}
+                            className={`${inputClass(err('barcode'))}${
+                                barcodeLocked ? ' cursor-not-allowed bg-slate-900/60 text-slate-300' : ''
+                            }`}
                             placeholder="4810014018641"
                             required
                         />
@@ -124,7 +134,8 @@ export default function ProductForm({
                             htmlFor="category"
                             className="block text-sm font-medium text-slate-200"
                         >
-                            Категория
+                            Категория{' '}
+                            <span className="font-normal text-slate-500">(необязательно)</span>
                         </label>
                         <input
                             id="category"
@@ -133,7 +144,6 @@ export default function ProductForm({
                             onChange={(e) => setData('category', e.target.value)}
                             className={inputClass(err('category'))}
                             placeholder="Квас Белорусский"
-                            required
                         />
                         <FieldError message={err('category')} />
                     </div>
@@ -143,7 +153,7 @@ export default function ProductForm({
                             htmlFor="name"
                             className="block text-sm font-medium text-slate-200"
                         >
-                            Название
+                            Название <span className="text-red-400">*</span>
                         </label>
                         <input
                             id="name"
@@ -294,21 +304,52 @@ export default function ProductForm({
                                 className="h-4 w-4 rounded border-slate-700 text-indigo-600 focus:ring-indigo-500"
                             />
                             <span className="text-sm font-medium text-slate-200">
-                                Проверен (checked)
+                                Проверен
                             </span>
                         </label>
+                        <p className="mt-1 text-xs text-slate-500">
+                            После импорта товары попадают как непроверенные.
+                            Админ может подтвердить вручную или массово в
+                            списке.
+                        </p>
                         <FieldError message={err('checked')} />
                     </div>
+
+                    {allowPrivate ? (
+                        <div className="sm:col-span-2">
+                            <label className="inline-flex cursor-pointer items-center gap-2">
+                                <input
+                                    type="checkbox"
+                                    checked={Boolean(data.is_private)}
+                                    onChange={(e) =>
+                                        setData('is_private', e.target.checked)
+                                    }
+                                    className="h-4 w-4 rounded border-slate-700 text-indigo-600 focus:ring-indigo-500"
+                                />
+                                <span className="text-sm font-medium text-slate-200">
+                                    Свой бренд (только наш арендатор)
+                                </span>
+                            </label>
+                            <p className="mt-1 text-xs text-slate-500">
+                                Например «Пирог от Гиппо». Остальным сетям товар
+                                не виден. По умолчанию товар глобальный.
+                            </p>
+                            <FieldError message={err('is_private')} />
+                        </div>
+                    ) : null}
                 </div>
             </div>
 
-            <div className="flex items-center justify-end gap-3">
-                <Link
-                    href={route('products.index')}
-                    className="rounded-lg border border-slate-700 bg-[#152033] px-4 py-2 text-sm font-medium text-slate-200 shadow-sm hover:bg-slate-800"
-                >
-                    Отмена
-                </Link>
+            <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                    {footerLeft}
+                    <Link
+                        href={route('products.index')}
+                        className="rounded-lg border border-slate-700 bg-[#152033] px-4 py-2 text-sm font-medium text-slate-200 shadow-sm hover:bg-slate-800"
+                    >
+                        Отмена
+                    </Link>
+                </div>
                 <button
                     type="submit"
                     disabled={processing}

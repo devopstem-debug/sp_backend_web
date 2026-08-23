@@ -51,6 +51,20 @@ export default function Edit({ product }) {
         >
             <Head title={`Редактирование: ${product.name}`} />
 
+            <div className="mb-4">
+                <span
+                    className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${
+                        product.is_global
+                            ? 'bg-sky-500/10 text-sky-300 ring-sky-400/30'
+                            : 'bg-violet-500/10 text-violet-300 ring-violet-400/30'
+                    }`}
+                >
+                    {product.is_global
+                        ? 'Глобальный каталог'
+                        : 'Свой бренд (только ваш арендатор)'}
+                </span>
+            </div>
+
             <ProductForm
                 data={data}
                 setData={setData}
@@ -59,6 +73,7 @@ export default function Edit({ product }) {
                 processing={processing}
                 submitLabel="Обновить"
                 onSubmit={submit}
+                showCatalogHint={false}
             />
         </AdminLayout>
     );

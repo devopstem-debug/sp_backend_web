@@ -85,14 +85,32 @@ class ProductImportService
                 $attributes = $this->attributesFromValidated($validator->validated());
 
                 $product = Product::withTrashed()
+                    ->withoutGlobalScopes()
                     ->where('barcode', $attributes['barcode'])
                     ->first();
 
                 if ($product) {
+                    if (
+                        $product->owner_tenant_id !== null
+                        && $product->owner_tenant_id !== $tenantId
+                    ) {
+                        $errors++;
+                        $errorRows[] = [
+                            'row' => $rowNumber,
+                            'barcode' => $attributes['barcode'],
+                            'messages' => [
+                                'Штрихкод занят приватным товаром другого арендатора.',
+                            ],
+                        ];
+
+                        continue;
+                    }
+
                     if ($product->trashed()) {
                         $product->restore();
                     }
 
+                    // Keep ownership: do not re-assign private → global on re-import.
                     $product->update($attributes);
                     $updated++;
 
@@ -101,7 +119,7 @@ class ProductImportService
 
                 Product::query()->create([
                     ...$attributes,
-                    'tenant_id' => $tenantId,
+                    'owner_tenant_id' => null,
                     'checked' => false,
                 ]);
                 $created++;

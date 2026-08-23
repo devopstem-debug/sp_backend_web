@@ -53,10 +53,12 @@ flowchart TB
 Каждый «клиент платформы» — запись `Tenant`. Пользователи и основные сущности привязаны через `tenant_id`.
 
 - Global scope `BelongsToTenant` ограничивает выборки текущим tenant пользователя.
+- **Товары** — исключение: общий каталог. Поле `owner_tenant_id` (`null` = глобальный SKU для всех; значение = private label только этого арендатора). Scope: `BelongsToProductCatalog`.
 - Super Admin обходит tenant-фильтр.
 - Оборудование, привязанное к магазину, фильтруется через `BelongsToStoreTenant` (по `store.tenant_id`).
 - Заведующий дополнительно ограничен отделом (`RestrictsToOwnDepartment`).
 - Middleware `tenant.active` и `subscription.active` закрывают доступ при неактивном tenant / истекшей подписке.
+- Лимиты тарифа: магазины и пользователи. Лимит товаров по тарифу **не применяется** (каталог общий).
 
 ## Идентификаторы и данные
 

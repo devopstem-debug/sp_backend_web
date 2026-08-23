@@ -1,6 +1,8 @@
 import { Head, Link, router, usePage } from '@inertiajs/react';
 import {
     ArrowPathIcon,
+    CheckBadgeIcon,
+    CheckIcon,
     MagnifyingGlassIcon,
     PencilSquareIcon,
     PlusIcon,
@@ -17,6 +19,7 @@ export default function Index({
     categories = [],
     filters,
     trashedCount = 0,
+    uncheckedCount = 0,
 }) {
     const { flash } = usePage().props;
     const can = useCan();
@@ -26,6 +29,7 @@ export default function Index({
     const [search, setSearch] = useState(filters.search || '');
     const [category, setCategory] = useState(filters.category || '');
     const trashed = Boolean(filters.trashed);
+    const uncheckedOnly = Boolean(filters.unchecked);
 
     useEffect(() => {
         if (flash?.success) {
@@ -43,6 +47,7 @@ export default function Index({
                 search: search || undefined,
                 category: category || undefined,
                 trashed: trashed ? 1 : undefined,
+                unchecked: uncheckedOnly ? 1 : undefined,
                 ...overrides,
             },
             {
@@ -60,9 +65,65 @@ export default function Index({
     const switchTab = (toTrashed) => {
         applyFilters({
             trashed: toTrashed ? 1 : undefined,
+            unchecked: toTrashed ? undefined : uncheckedOnly ? 1 : undefined,
             search: search || undefined,
             category: category || undefined,
         });
+    };
+
+    const toggleUncheckedFilter = () => {
+        applyFilters({
+            unchecked: uncheckedOnly ? undefined : 1,
+            trashed: undefined,
+        });
+    };
+
+    const handleApproveAll = async () => {
+        if (uncheckedCount < 1) {
+            fireSuccess('Непроверенных товаров нет.');
+            return;
+        }
+
+        const confirmed = await fireConfirm(
+            'Подтвердить все непроверенные?',
+            `Будет отмечено как проверенные: ${uncheckedCount} товар(ов). Обычно это делают после импорта.`,
+            'Подтвердить все',
+        );
+
+        if (!confirmed) {
+            return;
+        }
+
+        router.post(
+            route('products.approve-unchecked'),
+            {},
+            {
+                preserveScroll: true,
+                onError: () =>
+                    fireError('Не удалось подтвердить непроверенные товары.'),
+            },
+        );
+    };
+
+    const handleApproveOne = async (product) => {
+        const confirmed = await fireConfirm(
+            'Отметить как проверенный?',
+            `«${product.name}» будет отмечен как проверенный.`,
+            'Подтвердить',
+        );
+
+        if (!confirmed) {
+            return;
+        }
+
+        router.post(
+            route('products.approve', product.id),
+            {},
+            {
+                preserveScroll: true,
+                onError: () => fireError('Не удалось подтвердить товар.'),
+            },
+        );
     };
 
     const handleDelete = async (product) => {
@@ -165,16 +226,63 @@ export default function Index({
                         )}
                     </div>
 
-                    {!trashed && canCreate && (
-                        <Link
-                            href={route('products.create')}
-                            className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500"
-                        >
-                            <PlusIcon className="h-5 w-5" aria-hidden="true" />
-                            Добавить
-                        </Link>
+                    {!trashed && (
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                            {canEdit && uncheckedCount > 0 ? (
+                                <button
+                                    type="button"
+                                    onClick={handleApproveAll}
+                                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-300 shadow-sm transition hover:bg-emerald-500/20"
+                                >
+                                    <CheckBadgeIcon
+                                        className="h-5 w-5"
+                                        aria-hidden="true"
+                                    />
+                                    Подтвердить все ({uncheckedCount})
+                                </button>
+                            ) : null}
+
+                            {!trashed && canCreate ? (
+                                <Link
+                                    href={route('products.create')}
+                                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500"
+                                >
+                                    <PlusIcon
+                                        className="h-5 w-5"
+                                        aria-hidden="true"
+                                    />
+                                    Добавить
+                                </Link>
+                            ) : null}
+                        </div>
                     )}
                 </div>
+
+                {!trashed && canEdit && uncheckedCount > 0 ? (
+                    <div className="flex flex-col gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100 sm:flex-row sm:items-center sm:justify-between">
+                        <p>
+                            Непроверенных товаров:{' '}
+                            <span className="font-semibold text-white">
+                                {uncheckedCount}
+                            </span>
+                            . После импорта можно подтвердить все сразу.
+                        </p>
+                        <button
+                            type="button"
+                            onClick={toggleUncheckedFilter}
+                            className={clsx(
+                                'shrink-0 rounded-md px-3 py-1.5 text-xs font-semibold transition',
+                                uncheckedOnly
+                                    ? 'bg-amber-400 text-slate-900'
+                                    : 'bg-amber-500/20 text-amber-100 hover:bg-amber-500/30',
+                            )}
+                        >
+                            {uncheckedOnly
+                                ? 'Показать все'
+                                : 'Только непроверенные'}
+                        </button>
+                    </div>
+                ) : null}
 
                 <div className="rounded-xl bg-[#152033] p-4 shadow-sm ring-1 ring-slate-800">
                     <div className="grid gap-3 md:grid-cols-3 md:items-end">
@@ -287,7 +395,18 @@ export default function Index({
                                                 {product.barcode}
                                             </td>
                                             <td className="px-4 py-3 text-sm font-medium text-white">
-                                                {product.name}
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <span>{product.name}</span>
+                                                    {product.is_private ? (
+                                                        <span className="inline-flex items-center rounded-full bg-violet-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-300 ring-1 ring-inset ring-violet-400/30">
+                                                            Свой бренд
+                                                        </span>
+                                                    ) : (
+                                                        <span className="inline-flex items-center rounded-full bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-300 ring-1 ring-inset ring-sky-400/25">
+                                                            Глобальный
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </td>
                                             <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-300">
                                                 {product.category}
@@ -353,6 +472,24 @@ export default function Index({
                                                         </>
                                                     ) : (
                                                         <>
+                                                            {canEdit &&
+                                                                !product.checked && (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() =>
+                                                                            handleApproveOne(
+                                                                                product,
+                                                                            )
+                                                                        }
+                                                                        className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-emerald-300 hover:bg-emerald-500/15"
+                                                                        title="Отметить как проверенный"
+                                                                    >
+                                                                        <CheckIcon className="h-4 w-4" />
+                                                                        <span className="hidden sm:inline">
+                                                                            Подтвердить
+                                                                        </span>
+                                                                    </button>
+                                                                )}
                                                             {canEdit && (
                                                             <Link
                                                                 href={route(

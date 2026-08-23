@@ -3,7 +3,6 @@
 namespace Database\Factories;
 
 use App\Models\Product;
-use App\Models\Tenant;
 use Illuminate\Database\Eloquent\Factories\Factory;
 
 /**
@@ -16,7 +15,7 @@ class ProductFactory extends Factory
     public function definition(): array
     {
         return [
-            'tenant_id' => Tenant::factory(),
+            'owner_tenant_id' => null,
             'barcode' => fake()->unique()->numerify('#############'),
             'name' => fake()->words(4, true),
             'category' => fake()->randomElement([
@@ -33,5 +32,12 @@ class ProductFactory extends Factory
             'weight_g' => fake()->numberBetween(200, 2500),
             'checked' => false,
         ];
+    }
+
+    public function privateFor(string $tenantId): static
+    {
+        return $this->state(fn () => [
+            'owner_tenant_id' => $tenantId,
+        ]);
     }
 }

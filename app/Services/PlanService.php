@@ -135,26 +135,50 @@ class PlanService
     }
 
     /**
-     * @return list<array{value: string, label: string}>
+     * @return list<array{
+     *     value: string,
+     *     label: string,
+     *     max_stores: int,
+     *     max_users: int,
+     *     max_products: int,
+     *     price_monthly: float,
+     *     price_yearly: float
+     * }>
      */
     public function optionsForTenants(): array
     {
         $options = Plan::query()
+            ->where('is_active', true)
             ->orderBy('sort_order')
             ->get()
             ->map(fn (Plan $plan) => [
                 'value' => $plan->slug,
                 'label' => $plan->name,
+                'max_stores' => (int) $plan->max_stores,
+                'max_users' => (int) $plan->max_users,
+                'max_products' => (int) $plan->max_products,
+                'price_monthly' => (float) $plan->price_monthly,
+                'price_yearly' => (float) $plan->price_yearly,
             ])
             ->values()
             ->all();
 
-        return $options !== []
-            ? $options
-            : collect(Tenant::planLabels())
-                ->map(fn (string $label, string $value) => ['value' => $value, 'label' => $label])
-                ->values()
-                ->all();
+        if ($options !== []) {
+            return $options;
+        }
+
+        return collect(Tenant::planLabels())
+            ->map(fn (string $label, string $value) => [
+                'value' => $value,
+                'label' => $label,
+                'max_stores' => 5,
+                'max_users' => 20,
+                'max_products' => 500,
+                'price_monthly' => 0.0,
+                'price_yearly' => 0.0,
+            ])
+            ->values()
+            ->all();
     }
 
     private function uniqueSlug(string $source, ?string $ignoreId = null): string

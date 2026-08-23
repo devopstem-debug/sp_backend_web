@@ -10,8 +10,8 @@ import TenantForm, {
 export default function Edit({ tenant, plans = [] }) {
     const [clientErrors, setClientErrors] = useState({});
 
-    const { data, setData, put, processing, errors, transform } = useForm(
-        buildTenantFormData(tenant),
+    const { data, setData, put, processing, errors } = useForm(
+        buildTenantFormData(tenant, plans),
     );
 
     const submit = (e) => {
@@ -24,13 +24,6 @@ export default function Edit({ tenant, plans = [] }) {
             fireError('Исправьте ошибки в форме.');
             return;
         }
-
-        transform((form) => ({
-            ...form,
-            max_stores: Number(form.max_stores),
-            max_users: Number(form.max_users),
-            subscription_until: form.subscription_until || null,
-        }));
 
         put(route('tenants.update', tenant.id), {
             onSuccess: () => fireSuccess('Арендатор обновлён.'),

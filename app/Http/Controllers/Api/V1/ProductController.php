@@ -5,14 +5,11 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Concerns\AuthorizesResourcePermissions;
 use App\Http\Controllers\Controller;
 use App\Models\Product;
-use App\Models\Tenant;
-use App\Services\TenantQuotaService;
 use App\Support\Permissions;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Controllers\HasMiddleware;
-use Illuminate\Routing\Controllers\Middleware;
 use Illuminate\Validation\Rule;
 
 class ProductController extends Controller implements HasMiddleware
@@ -20,7 +17,7 @@ class ProductController extends Controller implements HasMiddleware
     use AuthorizesResourcePermissions;
 
     /**
-     * @return list<Middleware>
+     * @return list<\Illuminate\Routing\Controllers\Middleware>
      */
     public static function middleware(): array
     {
@@ -60,7 +57,7 @@ class ProductController extends Controller implements HasMiddleware
                 Rule::unique('products', 'barcode')->whereNull('deleted_at'),
             ],
             'name' => ['required', 'string', 'max:255'],
-            'category' => ['required', 'string', 'max:100'],
+            'category' => ['nullable', 'string', 'max:100'],
             'volume_ml' => ['nullable', 'integer', 'min:0'],
             'package_type' => ['nullable', 'string', 'max:50'],
             'width_mm' => ['nullable', 'integer', 'min:0'],
@@ -68,30 +65,23 @@ class ProductController extends Controller implements HasMiddleware
             'depth_mm' => ['nullable', 'integer', 'min:0'],
             'weight_g' => ['nullable', 'integer', 'min:0'],
             'checked' => ['sometimes', 'boolean'],
+            'is_private' => ['sometimes', 'boolean'],
         ]);
 
         $user = $request->user();
-        $tenantId = $user?->tenant_id;
+        $isPrivate = (bool) ($validated['is_private'] ?? false);
+        unset($validated['is_private']);
 
-        if (! $tenantId && $user?->isSuperAdmin()) {
-            $tenantId = Tenant::query()->where('is_active', true)->value('id');
+        $ownerTenantId = null;
+        if ($isPrivate) {
+            abort_unless($user?->tenant_id, 422, 'Приватный товар доступен только пользователю арендатора.');
+            $ownerTenantId = $user->tenant_id;
         }
-
-        abort_unless($tenantId, 403, 'Tenant is not assigned to your account.');
-
-        $tenant = Tenant::query()->findOrFail($tenantId);
-        $quotas = app(TenantQuotaService::class);
-
-        abort_unless(
-            $quotas->canAddProduct($tenant),
-            Response::HTTP_UNPROCESSABLE_ENTITY,
-            $quotas->productLimitMessage($tenant),
-        );
 
         $product = Product::query()->create([
             ...$validated,
             'checked' => (bool) ($validated['checked'] ?? false),
-            'tenant_id' => $tenantId,
+            'owner_tenant_id' => $ownerTenantId,
         ]);
 
         return response()->json($product, Response::HTTP_CREATED);
@@ -114,7 +104,7 @@ class ProductController extends Controller implements HasMiddleware
                     ->ignore($product->id),
             ],
             'name' => ['sometimes', 'string', 'max:255'],
-            'category' => ['sometimes', 'string', 'max:100'],
+            'category' => ['nullable', 'string', 'max:100'],
             'volume_ml' => ['nullable', 'integer', 'min:0'],
             'package_type' => ['nullable', 'string', 'max:50'],
             'width_mm' => ['nullable', 'integer', 'min:0'],
@@ -133,8 +123,14 @@ class ProductController extends Controller implements HasMiddleware
         return response()->json($product);
     }
 
-    public function destroy(Product $product): JsonResponse
+    public function destroy(Request $request, Product $product): JsonResponse
     {
+        $user = $request->user();
+
+        if ($product->isGlobal() && ! $user?->isSuperAdmin()) {
+            abort(403, 'Глобальный товар каталога может удалить только Super Admin.');
+        }
+
         $product->delete();
 
         return response()->json(null, Response::HTTP_NO_CONTENT);

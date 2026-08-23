@@ -5,13 +5,10 @@ declare(strict_types=1);
 namespace App\Http\Requests;
 
 use App\Http\Requests\Concerns\AuthorizesCrudPermission;
-use App\Models\Tenant;
-use App\Services\TenantQuotaService;
 use App\Support\Permissions;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
-use Illuminate\Validation\Validator;
 
 class ProductRequest extends FormRequest
 {
@@ -40,7 +37,7 @@ class ProductRequest extends FormRequest
                     ->ignore($productId),
             ],
             'name' => ['required', 'string', 'max:255'],
-            'category' => ['required', 'string', 'max:100'],
+            'category' => ['nullable', 'string', 'max:100'],
             'volume_ml' => ['nullable', 'integer', 'min:0'],
             'package_type' => ['nullable', 'string', 'max:50'],
             'width_mm' => ['nullable', 'integer', 'min:0'],
@@ -48,6 +45,7 @@ class ProductRequest extends FormRequest
             'depth_mm' => ['nullable', 'integer', 'min:0'],
             'weight_g' => ['nullable', 'integer', 'min:0'],
             'checked' => ['sometimes', 'boolean'],
+            'is_private' => ['sometimes', 'boolean'],
         ];
     }
 
@@ -60,9 +58,8 @@ class ProductRequest extends FormRequest
             'barcode.required' => 'Укажите штрихкод.',
             'barcode.size' => 'Штрихкод должен содержать 13 символов.',
             'barcode.regex' => 'Штрихкод должен состоять из 13 цифр.',
-            'barcode.unique' => 'Товар с таким штрихкодом уже существует.',
+            'barcode.unique' => 'Товар с таким штрихкодом уже существует в каталоге.',
             'name.required' => 'Укажите название товара.',
-            'category.required' => 'Укажите категорию.',
         ];
     }
 
@@ -71,6 +68,7 @@ class ProductRequest extends FormRequest
         $nullableInts = ['volume_ml', 'width_mm', 'height_mm', 'depth_mm', 'weight_g'];
         $merged = [
             'checked' => $this->boolean('checked'),
+            'is_private' => $this->boolean('is_private'),
             'barcode' => preg_replace('/\s+/', '', (string) $this->input('barcode', '')),
         ];
 
@@ -83,34 +81,11 @@ class ProductRequest extends FormRequest
             $merged['package_type'] = null;
         }
 
+        if ($this->input('category') === '') {
+            $merged['category'] = null;
+        }
+
         $this->merge($merged);
-    }
-
-    public function withValidator(Validator $validator): void
-    {
-        $validator->after(function (Validator $validator): void {
-            if (! $this->isMethod('POST')) {
-                return;
-            }
-
-            $tenantId = $this->user()?->tenant_id;
-
-            if (! is_string($tenantId) || $tenantId === '') {
-                return;
-            }
-
-            $tenant = Tenant::query()->find($tenantId);
-
-            if (! $tenant) {
-                return;
-            }
-
-            $quotas = app(TenantQuotaService::class);
-
-            if (! $quotas->canAddProduct($tenant)) {
-                $validator->errors()->add('name', $quotas->productLimitMessage($tenant));
-            }
-        });
     }
 
     /**
@@ -123,7 +98,9 @@ class ProductRequest extends FormRequest
         return [
             'barcode' => $validated['barcode'],
             'name' => trim($validated['name']),
-            'category' => trim($validated['category']),
+            'category' => isset($validated['category'])
+                ? (trim((string) $validated['category']) ?: null)
+                : null,
             'volume_ml' => $validated['volume_ml'] ?? null,
             'package_type' => isset($validated['package_type'])
                 ? trim((string) $validated['package_type']) ?: null
@@ -134,5 +111,10 @@ class ProductRequest extends FormRequest
             'weight_g' => $validated['weight_g'] ?? null,
             'checked' => (bool) ($validated['checked'] ?? false),
         ];
+    }
+
+    public function wantsPrivate(): bool
+    {
+        return $this->boolean('is_private');
     }
 }

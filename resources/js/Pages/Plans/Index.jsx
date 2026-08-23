@@ -33,7 +33,7 @@ export default function Index({
             { key: 'price', label: 'Цена' },
             { key: 'stores', label: 'Магазины' },
             { key: 'users', label: 'Пользователи' },
-            { key: 'products', label: 'Товары' },
+            { key: 'catalog', label: 'Каталог товаров' },
             ...[...featureSet].map((feature) => ({ key: `f:${feature}`, label: feature })),
         ];
     }, [plans]);
@@ -147,7 +147,7 @@ export default function Index({
                                     <ul className="mt-6 space-y-2 text-sm text-slate-300">
                                         <li>До {plan.max_stores} магазинов</li>
                                         <li>До {plan.max_users} пользователей</li>
-                                        <li>До {plan.max_products} товаров</li>
+                                        <li>Общий каталог товаров (без лимита)</li>
                                         {(plan.features || []).map((feature) => (
                                             <li key={feature} className="flex gap-2">
                                                 <CheckIcon className="mt-0.5 h-4 w-4 shrink-0 text-indigo-400" />
@@ -201,8 +201,8 @@ export default function Index({
                                                         value = plan.max_stores;
                                                     } else if (row.key === 'users') {
                                                         value = plan.max_users;
-                                                    } else if (row.key === 'products') {
-                                                        value = plan.max_products;
+                                                    } else if (row.key === 'catalog') {
+                                                        value = 'Общий (без лимита)';
                                                     } else if (row.key.startsWith('f:')) {
                                                         const feature = row.key.slice(2);
                                                         value = (plan.features || []).includes(feature)

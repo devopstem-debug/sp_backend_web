@@ -154,7 +154,8 @@ export default function PlanForm({
                 </div>
                 <div>
                     <label htmlFor="max_products" className="block text-sm font-medium text-slate-200">
-                        Max товаров
+                        Max товаров{' '}
+                        <span className="font-normal text-slate-500">(не используется)</span>
                     </label>
                     <input
                         id="max_products"
@@ -164,6 +165,10 @@ export default function PlanForm({
                         onChange={(e) => setData('max_products', e.target.value)}
                         className={inputClass(Boolean(errors.max_products))}
                     />
+                    <p className="mt-1 text-xs text-slate-500">
+                        Каталог товаров общий. Поле сохраняется для совместимости, лимит не
+                        применяется.
+                    </p>
                     <FieldError message={errors.max_products} />
                 </div>
             </div>

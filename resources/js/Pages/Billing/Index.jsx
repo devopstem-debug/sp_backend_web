@@ -135,7 +135,8 @@ export default function Index({
                             <div>
                                 <dt className="text-slate-400">Лимиты</dt>
                                 <dd className="text-white">
-                                    {tenant?.max_stores} маг. · {tenant?.max_users} польз. · {tenant?.max_products} тов.
+                                    {tenant?.max_stores} маг. · {tenant?.max_users} польз.
+                                    <span className="text-slate-500"> · каталог общий</span>
                                 </dd>
                             </div>
                         </dl>

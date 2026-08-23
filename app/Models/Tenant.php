@@ -86,7 +86,7 @@ class Tenant extends Model
 
     public function products(): HasMany
     {
-        return $this->hasMany(Product::class);
+        return $this->hasMany(Product::class, 'owner_tenant_id');
     }
 
     public function settings(): HasMany
