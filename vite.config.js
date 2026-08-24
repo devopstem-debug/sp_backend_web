@@ -44,7 +44,14 @@ export default defineConfig({
             },
             workbox: {
                 navigateFallback: null,
+                cleanupOutdatedCaches: true,
                 globPatterns: ['**/*.{js,css,ico,svg,woff2,png,webp}'],
+                runtimeCaching: [
+                    {
+                        urlPattern: ({ request }) => request.mode === 'navigate',
+                        handler: 'NetworkOnly',
+                    },
+                ],
             },
             devOptions: {
                 enabled: false,

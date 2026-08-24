@@ -39,6 +39,11 @@ QUEUE_CONNECTION=redis
 SESSION_DRIVER=redis
 SESSION_SECURE_COOKIE=true
 SECURE_HEADERS_HSTS=true
+
+# Reverb через Nginx на 443 (не 8080 в браузере):
+REVERB_HOST=your-domain.tld
+REVERB_PORT=443
+REVERB_SCHEME=https
 ```
 
 3. **Зависимости и сборка**
@@ -79,6 +84,18 @@ server {
         include fastcgi_params;
         fastcgi_pass unix:/run/php/php8.3-fpm.sock;
         fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+    }
+
+    # Laravel Reverb (WebSocket) — клиент подключается к wss://domain/app/...
+    location /app {
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header Scheme $scheme;
+        proxy_set_header SERVER_PORT $server_port;
+        proxy_set_header SERVER_NAME $host;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "Upgrade";
+        proxy_pass http://127.0.0.1:8080;
     }
 }
 ```

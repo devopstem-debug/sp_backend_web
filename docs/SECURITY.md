@@ -28,6 +28,26 @@ SESSION_SAME_SITE=lax
 SECURE_HEADERS_HSTS=true
 ```
 
+## Content-Security-Policy (production)
+
+Middleware `SecurityHeaders` разрешает:
+
+- тайлы карты OpenStreetMap (`img-src`);
+- геокодирование Nominatim (`connect-src`);
+- WebSocket Reverb (из `REVERB_*` в `.env`).
+
+На HTTPS Reverb в браузере должен идти через **443** (Nginx → `reverb:8080`), не `:8080` напрямую:
+
+```env
+REVERB_HOST=smart-planogramma.by
+REVERB_PORT=443
+REVERB_SCHEME=https
+```
+
+Дополнительные origins: `CSP_CONNECT_SRC_EXTRA`, `CSP_IMG_SRC_EXTRA`.
+
+После деплоя CSP/PWA — жёсткое обновление (Ctrl+Shift+R), чтобы обновился service worker.
+
 ## Инциденты с credentials
 
 Если service account Firebase или `.env` попали в публичный репозиторий:

@@ -29,7 +29,7 @@ class SecurityHeaders
             $response->headers->set('Content-Security-Policy', $this->productionCsp());
         }
 
-        if (filter_var(env('SECURE_HEADERS_HSTS', false), FILTER_VALIDATE_BOOLEAN)) {
+        if (filter_var(config('security.hsts', env('SECURE_HEADERS_HSTS', false)), FILTER_VALIDATE_BOOLEAN)) {
             $response->headers->set(
                 'Strict-Transport-Security',
                 'max-age=31536000; includeSubDomains',
@@ -46,6 +46,23 @@ class SecurityHeaders
 
     private function productionCsp(): string
     {
+        $connectSrc = array_unique(array_merge(
+            ["'self'"],
+            $this->reverbConnectOrigins(),
+            ['https://nominatim.openstreetmap.org'],
+            $this->parseCsv(config('security.csp_connect_src_extra')),
+        ));
+
+        $imgSrc = array_unique(array_merge(
+            ["'self'", 'data:', 'blob:'],
+            [
+                'https://*.tile.openstreetmap.org',
+                'https://tile.openstreetmap.org',
+                'https://*.openstreetmap.org',
+            ],
+            $this->parseCsv(config('security.csp_img_src_extra')),
+        ));
+
         return implode('; ', [
             "default-src 'self'",
             "base-uri 'self'",
@@ -55,10 +72,63 @@ class SecurityHeaders
             "script-src 'self' 'unsafe-inline'",
             "style-src 'self' 'unsafe-inline' https://fonts.bunny.net",
             "font-src 'self' data: https://fonts.bunny.net",
-            "img-src 'self' data: blob:",
-            "connect-src 'self'",
+            'img-src '.implode(' ', $imgSrc),
+            'connect-src '.implode(' ', $connectSrc),
             "worker-src 'self' blob:",
             "manifest-src 'self'",
         ]);
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function reverbConnectOrigins(): array
+    {
+        $app = config('reverb.apps.apps.0.options');
+
+        if (! is_array($app)) {
+            return [];
+        }
+
+        $host = trim((string) ($app['host'] ?? ''));
+
+        if ($host === '') {
+            return [];
+        }
+
+        $scheme = (string) ($app['scheme'] ?? 'https');
+        $port = (int) ($app['port'] ?? ($scheme === 'https' ? 443 : 8080));
+        $origins = [];
+
+        if ($scheme === 'https') {
+            $origins[] = "wss://{$host}";
+            if ($port !== 443) {
+                $origins[] = "wss://{$host}:{$port}";
+            }
+
+            return $origins;
+        }
+
+        $origins[] = "ws://{$host}";
+        if ($port !== 80) {
+            $origins[] = "ws://{$host}:{$port}";
+        }
+
+        return $origins;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function parseCsv(?string $value): array
+    {
+        if ($value === null || trim($value) === '') {
+            return [];
+        }
+
+        return array_values(array_filter(array_map(
+            static fn (string $item): string => trim($item),
+            explode(',', $value),
+        )));
     }
 }
