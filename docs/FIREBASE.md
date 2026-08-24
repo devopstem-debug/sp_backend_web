@@ -78,7 +78,8 @@ FIREBASE_CREDENTIALS=/absolute/path/to/firebase-credentials.json
 При создании/обновлении пользователя (если Firebase credentials настроены):
 
 1. **Firebase Auth** — аккаунт email/password, uid сохраняется в `users.firebase_uid`.
-2. **Realtime Database** — профиль:
+2. **Статус** — `users.firebase_status` (`pending` | `synced` | `error`), время в `firebase_synced_at`.
+3. **Realtime Database** — профиль:
 
 ```text
 users/{firebase_uid}/
@@ -91,15 +92,18 @@ users/{firebase_uid}/
 | Событие | Auth | RTDB |
 |---------|------|------|
 | Создание | `createUser` | `syncUser` (name, role, department, store_keys) |
-| Смена пароля | `updatePassword` | — |
+| Смена пароля / email / имени | `updateUser` | `syncUser` |
 | Смена роли / отдела | — | `syncUser` (обновляет store_keys) |
 | Блокировка | `disableUser` | — |
 | Разблокировка | `enableUser` | — |
-| Удаление | `deleteUser` | `deleteUserProfile` |
+| Ручная синхронизация | `syncNow` | `syncUser` |
+| Удаление только из Firebase | `deleteUser` | `deleteUserProfile` (uid сбрасывается локально) |
 
 `store_keys` для Заведующего — ключ магазина его отдела; для остальных ролей tenant — все магазины арендатора; Super Admin — `[]`.
 
-Сервисы: `FirebaseAuthService`, `FirebaseUserService`.
+Сервисы: `FirebaseAuthService`, `FirebaseUserService`, `UserFirebaseSyncService`.
+
+Ручная синхронизация: `POST /users/{id}/sync-firebase`. Удаление только из Firebase: `POST /users/{id}/delete-firebase`.
 
 ## Автосинхронизация магазинов
 

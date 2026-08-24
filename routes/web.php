@@ -74,6 +74,10 @@ Route::middleware(['auth', 'user.active', 'tenant.active', 'subscription.active'
 
     Route::post('users/{id}/toggle-active', [UserController::class, 'toggleActive'])
         ->name('users.toggle-active');
+    Route::post('users/{id}/sync-firebase', [UserController::class, 'syncFirebase'])
+        ->name('users.sync-firebase');
+    Route::post('users/{id}/delete-firebase', [UserController::class, 'deleteFromFirebase'])
+        ->name('users.delete-firebase');
     Route::post('users/{id}/comments', [UserController::class, 'storeComment'])
         ->name('users.comments.store');
     Route::resource('users', UserController::class);

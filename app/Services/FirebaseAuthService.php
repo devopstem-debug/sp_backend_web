@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Log;
 use Kreait\Firebase\Exception\AuthException;
 use Kreait\Firebase\Exception\FirebaseException;
 use Kreait\Firebase\Request\CreateUser;
+use Kreait\Firebase\Request\UpdateUser;
 use RuntimeException;
 use SensitiveParameter;
 
@@ -59,6 +60,41 @@ final class FirebaseAuthService
         }
 
         return $uid;
+    }
+
+    public function updateUser(
+        string $uid,
+        string $email,
+        string $name,
+        #[SensitiveParameter] ?string $password = null,
+        ?string $tenantId = null,
+    ): void {
+        $uid = $this->requireUid($uid);
+
+        try {
+            $request = UpdateUser::new()
+                ->withUid($uid)
+                ->withDisplayName($name)
+                ->withEmail($email);
+
+            $this->firebase->auth($tenantId)->updateUser($request);
+
+            if ($password !== null && $password !== '') {
+                $this->firebase->auth($tenantId)->changeUserPassword($uid, $password);
+            }
+        } catch (AuthException|FirebaseException $exception) {
+            Log::error('Firebase Auth updateUser failed', [
+                'uid' => $uid,
+                'email' => $email,
+                'message' => $exception->getMessage(),
+            ]);
+
+            throw new RuntimeException(
+                'Не удалось обновить пользователя в Firebase Auth: '.$exception->getMessage(),
+                0,
+                $exception,
+            );
+        }
     }
 
     public function updatePassword(

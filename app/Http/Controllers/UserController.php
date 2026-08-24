@@ -12,7 +12,7 @@ use App\Models\Tenant;
 use App\Models\User;
 use App\Models\UserComment;
 use App\Services\FirebaseAuthService;
-use App\Services\FirebaseUserService;
+use App\Services\UserFirebaseSyncService;
 use App\Support\Permissions;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -20,7 +20,6 @@ use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use Inertia\Inertia;
 use Inertia\Response;
 use RuntimeException;
@@ -32,7 +31,7 @@ class UserController extends Controller implements HasMiddleware
 {
     public function __construct(
         private readonly FirebaseAuthService $firebaseAuth,
-        private readonly FirebaseUserService $firebaseUsers,
+        private readonly UserFirebaseSyncService $firebaseSync,
     ) {}
 
     /**
@@ -43,7 +42,7 @@ class UserController extends Controller implements HasMiddleware
         return [
             new Middleware('permission:'.Permissions::VIEW_USERS, only: ['index', 'show']),
             new Middleware('permission:'.Permissions::CREATE_USERS, only: ['create', 'store']),
-            new Middleware('permission:'.Permissions::EDIT_USERS, only: ['edit', 'update', 'storeComment']),
+            new Middleware('permission:'.Permissions::EDIT_USERS, only: ['edit', 'update', 'storeComment', 'syncFirebase', 'deleteFromFirebase']),
             new Middleware('permission:'.Permissions::BLOCK_USERS, only: ['toggleActive']),
             new Middleware('permission:'.Permissions::DELETE_USERS, only: ['destroy']),
         ];
@@ -97,6 +96,10 @@ class UserController extends Controller implements HasMiddleware
             'departments' => $this->departmentsForSelect(),
             'canManageTenants' => (bool) $actor?->isSuperAdmin(),
             'quota' => $this->userQuotaForActor($actor),
+            'firebaseErrorsCount' => User::query()
+                ->when(! $actor?->isSuperAdmin(), fn ($query) => $query->where('tenant_id', $actor?->tenant_id))
+                ->where('firebase_status', User::FIREBASE_STATUS_ERROR)
+                ->count(),
         ]);
     }
 
@@ -127,34 +130,13 @@ class UserController extends Controller implements HasMiddleware
     public function store(StoreUserRequest $request): RedirectResponse
     {
         $data = $request->validated();
-        $tenantId = $data['tenant_id'] ?? null;
-        $firebaseUid = null;
         $firebaseWarning = null;
 
         try {
-            if ($this->firebaseAuth->isConfigured($tenantId)) {
-                try {
-                    $firebaseUid = $this->firebaseAuth->createUser(
-                        $data['email'],
-                        $data['password'],
-                        $data['name'],
-                        $tenantId,
-                    );
-                } catch (RuntimeException $exception) {
-                    Log::warning('Firebase Auth unavailable during user create, continuing locally', [
-                        'email' => $data['email'],
-                        'message' => $exception->getMessage(),
-                    ]);
-                    $firebaseWarning = 'Пользователь создан в панели, но Firebase Auth недоступен. Проверьте настройки Firebase.';
-                    $firebaseUid = null;
-                }
-            }
-
-            $user = DB::transaction(function () use ($data, $firebaseUid): User {
+            $user = DB::transaction(function () use ($data): User {
                 $user = User::query()->create([
                     'name' => $data['name'],
                     'email' => $data['email'],
-                    'firebase_uid' => $firebaseUid,
                     'phone' => $data['phone'] ?? null,
                     'password' => $data['password'],
                     'tenant_id' => $data['tenant_id'] ?? null,
@@ -165,6 +147,7 @@ class UserController extends Controller implements HasMiddleware
                     'locale' => $data['locale'] ?? 'ru',
                     'is_active' => (bool) ($data['is_active'] ?? true),
                     'email_verified_at' => now(),
+                    'firebase_status' => User::FIREBASE_STATUS_PENDING,
                 ]);
 
                 $user->syncRoles([$data['role']]);
@@ -172,29 +155,13 @@ class UserController extends Controller implements HasMiddleware
                 return $user->fresh(['roles', 'department']) ?? $user;
             });
 
-            if ($firebaseUid && $this->firebaseUsers->isConfigured($tenantId)) {
-                try {
-                    $this->firebaseUsers->syncUser($user, $tenantId);
-                } catch (RuntimeException $exception) {
-                    Log::warning('Firebase RTDB sync failed after user create', [
-                        'user_id' => $user->id,
-                        'message' => $exception->getMessage(),
-                    ]);
-                    $firebaseWarning ??= 'Пользователь создан, но синхронизация с Firebase RTDB не удалась.';
-                }
+            try {
+                $this->firebaseSync->provision($user, $data['password']);
+            } catch (RuntimeException $exception) {
+                $firebaseWarning = 'Пользователь создан в панели, но синхронизация с Firebase не удалась: '
+                    .$exception->getMessage();
             }
         } catch (Throwable $exception) {
-            if ($firebaseUid) {
-                try {
-                    $this->firebaseAuth->deleteUser($firebaseUid, $tenantId);
-                } catch (Throwable $cleanupException) {
-                    Log::warning('Firebase Auth cleanup after failed user create', [
-                        'uid' => $firebaseUid,
-                        'message' => $cleanupException->getMessage(),
-                    ]);
-                }
-            }
-
             if ($exception instanceof RuntimeException) {
                 return back()->withInput()->with('error', $exception->getMessage());
             }
@@ -202,8 +169,10 @@ class UserController extends Controller implements HasMiddleware
             throw $exception;
         }
 
+        $user->refresh();
+
         $message = 'Пользователь создан.';
-        if ($firebaseUid && ! $firebaseWarning) {
+        if ($user->firebase_status === User::FIREBASE_STATUS_SYNCED) {
             $message .= ' Синхронизирован с Firebase.';
         }
 
@@ -266,6 +235,7 @@ class UserController extends Controller implements HasMiddleware
             'loginLogs' => $loginLogs,
             'activities' => $activities,
             'comments' => $comments,
+            'firebaseConfigured' => $this->firebaseSync->isConfigured($model->tenant_id),
             'stats' => [
                 'logins_total' => $model->loginLogs()->count(),
                 'logins_success' => $model->loginLogs()->where('status', 'success')->count(),
@@ -297,9 +267,10 @@ class UserController extends Controller implements HasMiddleware
     {
         $model = $this->findManagedUser($user);
         $data = $request->validated();
-        $tenantId = $data['tenant_id'] ?? $model->tenant_id;
         $passwordChanged = ! empty($data['password']);
         $wasActive = (bool) $model->is_active;
+        $activeChanged = array_key_exists('is_active', $data) && (bool) $data['is_active'] !== $wasActive;
+        $firebaseWarning = null;
 
         try {
             DB::transaction(function () use ($model, $data): void {
@@ -329,34 +300,30 @@ class UserController extends Controller implements HasMiddleware
 
             $model->refresh()->load(['roles', 'department']);
 
-            if ($model->firebase_uid && $this->firebaseAuth->isConfigured($tenantId)) {
-                if ($passwordChanged) {
-                    $this->firebaseAuth->updatePassword(
-                        (string) $model->firebase_uid,
-                        (string) $data['password'],
-                        $tenantId,
-                    );
-                }
-
-                if (array_key_exists('is_active', $data) && (bool) $data['is_active'] !== $wasActive) {
-                    if ((bool) $data['is_active']) {
-                        $this->firebaseAuth->enableUser((string) $model->firebase_uid, $tenantId);
-                    } else {
-                        $this->firebaseAuth->disableUser((string) $model->firebase_uid, $tenantId);
-                    }
-                }
-            }
-
-            if ($model->firebase_uid && $this->firebaseUsers->isConfigured($tenantId)) {
-                $this->firebaseUsers->syncUser($model, $tenantId);
+            try {
+                $this->firebaseSync->push(
+                    $model,
+                    $passwordChanged ? (string) $data['password'] : null,
+                    $activeChanged,
+                    $wasActive,
+                );
+            } catch (RuntimeException $exception) {
+                $firebaseWarning = 'Данные сохранены, но синхронизация с Firebase не удалась: '
+                    .$exception->getMessage();
             }
         } catch (RuntimeException $exception) {
             return back()->withInput()->with('error', $exception->getMessage());
         }
 
+        $message = 'Пользователь обновлён.';
+        if ($model->firebase_status === User::FIREBASE_STATUS_SYNCED) {
+            $message .= ' Синхронизирован с Firebase.';
+        }
+
         return redirect()
             ->route('users.show', $model->id)
-            ->with('success', 'Пользователь обновлён.');
+            ->with('success', $message)
+            ->with('warning', $firebaseWarning);
     }
 
     public function destroy(string $user): RedirectResponse
@@ -367,19 +334,10 @@ class UserController extends Controller implements HasMiddleware
             return back()->with('error', 'Нельзя удалить собственный аккаунт.');
         }
 
-        $firebaseUid = $model->firebase_uid ? (string) $model->firebase_uid : null;
-        $tenantId = $model->tenant_id;
-
         try {
-            if ($firebaseUid && $this->firebaseAuth->isConfigured($tenantId)) {
-                $this->firebaseAuth->deleteUser($firebaseUid, $tenantId);
-            }
-
-            if ($firebaseUid && $this->firebaseUsers->isConfigured($tenantId)) {
-                $this->firebaseUsers->deleteUserProfile($firebaseUid, $tenantId);
-            }
-
             $model->delete();
+
+            $this->firebaseSync->purge($model);
         } catch (RuntimeException $exception) {
             return back()->with('error', $exception->getMessage());
         }
@@ -387,6 +345,35 @@ class UserController extends Controller implements HasMiddleware
         return redirect()
             ->route('users.index')
             ->with('success', 'Пользователь удалён.');
+    }
+
+    public function syncFirebase(Request $request, string $id): RedirectResponse
+    {
+        $model = $this->findManagedUser($id);
+
+        try {
+            $this->firebaseSync->syncNow(
+                $model,
+                $request->filled('password') ? (string) $request->string('password') : null,
+            );
+        } catch (RuntimeException $exception) {
+            return back()->with('error', $exception->getMessage());
+        }
+
+        return back()->with('success', 'Пользователь синхронизирован с Firebase.');
+    }
+
+    public function deleteFromFirebase(string $id): RedirectResponse
+    {
+        $model = $this->findManagedUser($id);
+
+        try {
+            $this->firebaseSync->removeFromFirebase($model);
+        } catch (RuntimeException $exception) {
+            return back()->with('error', $exception->getMessage());
+        }
+
+        return back()->with('success', 'Пользователь удалён из Firebase.');
     }
 
     public function toggleActive(string $id): RedirectResponse
@@ -410,7 +397,13 @@ class UserController extends Controller implements HasMiddleware
             }
 
             $model->update(['is_active' => $willBeActive]);
+
+            if ($model->firebase_uid) {
+                $this->firebaseSync->markSynced($model);
+            }
         } catch (RuntimeException $exception) {
+            $this->firebaseSync->markError($model);
+
             return back()->with('error', $exception->getMessage());
         }
 
@@ -513,6 +506,8 @@ class UserController extends Controller implements HasMiddleware
             'last_login_at' => $user->last_login_at?->timezone(Auth::user()?->timezone ?? 'UTC')->toIso8601String(),
             'created_at' => $user->created_at?->timezone(Auth::user()?->timezone ?? 'UTC')->toIso8601String(),
             'firebase_uid' => $user->firebase_uid,
+            'firebase_status' => $user->firebase_status ?? User::FIREBASE_STATUS_PENDING,
+            'firebase_synced_at' => $user->firebase_synced_at?->timezone(Auth::user()?->timezone ?? 'UTC')->toIso8601String(),
         ];
 
         if ($detailed) {

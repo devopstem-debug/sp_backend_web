@@ -8,7 +8,7 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import AdminLayout from '@/layouts/AdminLayout';
 import { useCan } from '@/lib/permissions';
-import { fireConfirm, fireError, fireSuccess } from '@/lib/swal';
+import { fireConfirm, fireError, fireSuccess, fireToast } from '@/lib/swal';
 import clsx from 'clsx';
 
 const TABS = [
@@ -64,12 +64,40 @@ function StatCard({ label, value }) {
     );
 }
 
+function FirebaseStatusBadge({ status }) {
+    const normalized = status || 'pending';
+
+    const styles = {
+        synced: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20',
+        pending: 'bg-amber-50 text-amber-700 ring-amber-600/20',
+        error: 'bg-red-50 text-red-700 ring-red-600/20',
+    };
+
+    const labels = {
+        synced: '✅ synced',
+        pending: '⏳ pending',
+        error: '❌ error',
+    };
+
+    return (
+        <span
+            className={clsx(
+                'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset',
+                styles[normalized] || styles.pending,
+            )}
+        >
+            {labels[normalized] || labels.pending}
+        </span>
+    );
+}
+
 export default function Show({
     user,
     loginLogs = [],
     activities = [],
     comments = [],
     stats = {},
+    firebaseConfigured = false,
 }) {
     const page = usePage();
     const { flash } = page.props;
@@ -110,6 +138,9 @@ export default function Show({
         }
         if (flash?.error) {
             fireError(flash.error);
+        }
+        if (flash?.warning) {
+            fireToast('warning', flash.warning);
         }
     }, [flash]);
 
@@ -162,6 +193,50 @@ export default function Show({
             },
             onError: () => fireError('Не удалось добавить комментарий.'),
         });
+    };
+
+    const handleSyncFirebase = async () => {
+        const confirmed = await fireConfirm(
+            'Синхронизировать с Firebase?',
+            'Данные пользователя будут отправлены в Firebase Auth и RTDB.',
+            'Синхронизировать',
+        );
+
+        if (!confirmed) {
+            return;
+        }
+
+        router.post(
+            route('users.sync-firebase', user.id),
+            {},
+            {
+                preserveScroll: true,
+                onError: () =>
+                    fireError('Не удалось синхронизировать пользователя с Firebase.'),
+            },
+        );
+    };
+
+    const handleDeleteFromFirebase = async () => {
+        const confirmed = await fireConfirm(
+            'Удалить из Firebase?',
+            'Аккаунт будет удалён из Firebase Auth и RTDB. Локальная запись сохранится.',
+            'Удалить из Firebase',
+        );
+
+        if (!confirmed) {
+            return;
+        }
+
+        router.post(
+            route('users.delete-firebase', user.id),
+            {},
+            {
+                preserveScroll: true,
+                onError: () =>
+                    fireError('Не удалось удалить пользователя из Firebase.'),
+            },
+        );
     };
 
     return (
@@ -224,6 +299,25 @@ export default function Show({
             <Head title={user.name} />
 
             <div className="space-y-4">
+                {user.firebase_status === 'error' ? (
+                    <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+                        <p>
+                            Синхронизация с Firebase завершилась с ошибкой.
+                            Проверьте настройки интеграции или повторите
+                            отправку.
+                        </p>
+                        {canEdit ? (
+                            <button
+                                type="button"
+                                onClick={handleSyncFirebase}
+                                className="mt-3 rounded-md bg-red-500/20 px-3 py-1.5 text-xs font-semibold text-red-100 hover:bg-red-500/30"
+                            >
+                                Повторить синхронизацию
+                            </button>
+                        ) : null}
+                    </div>
+                ) : null}
+
                 <div className="flex gap-1 overflow-x-auto rounded-lg bg-[#152033] p-1 shadow-sm ring-1 ring-slate-800">
                     {TABS.map((tab) => (
                         <button
@@ -324,6 +418,56 @@ export default function Show({
                                 </InfoRow>
                                 <InfoRow label="Создан">
                                     {formatDate(user.created_at)}
+                                </InfoRow>
+                            </dl>
+                        </div>
+
+                        <div className="rounded-xl bg-[#152033] p-6 shadow-sm ring-1 ring-slate-800">
+                            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                                <div>
+                                    <h2 className="text-base font-semibold text-white">
+                                        Firebase интеграция
+                                    </h2>
+                                    <p className="mt-1 text-sm text-slate-400">
+                                        {firebaseConfigured
+                                            ? 'Firebase настроен для арендатора.'
+                                            : 'Firebase не настроен — синхронизация недоступна.'}
+                                    </p>
+                                </div>
+                                {canEdit && firebaseConfigured ? (
+                                    <div className="flex flex-wrap gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={handleSyncFirebase}
+                                            className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
+                                        >
+                                            Синхронизировать сейчас
+                                        </button>
+                                        {user.firebase_uid ? (
+                                            <button
+                                                type="button"
+                                                onClick={handleDeleteFromFirebase}
+                                                className="rounded-lg border border-red-500/40 px-3 py-2 text-sm font-semibold text-red-300 hover:bg-red-500/10"
+                                            >
+                                                Удалить из Firebase
+                                            </button>
+                                        ) : null}
+                                    </div>
+                                ) : null}
+                            </div>
+                            <dl className="space-y-4">
+                                <InfoRow label="Firebase UID">
+                                    <span className="font-mono text-sm">
+                                        {user.firebase_uid || '—'}
+                                    </span>
+                                </InfoRow>
+                                <InfoRow label="Статус">
+                                    <FirebaseStatusBadge
+                                        status={user.firebase_status}
+                                    />
+                                </InfoRow>
+                                <InfoRow label="Последняя синхронизация">
+                                    {formatDate(user.firebase_synced_at)}
                                 </InfoRow>
                             </dl>
                         </div>

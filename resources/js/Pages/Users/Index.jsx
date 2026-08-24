@@ -32,6 +32,33 @@ function formatDate(value) {
     }
 }
 
+function FirebaseStatusBadge({ status }) {
+    const normalized = status || 'pending';
+
+    const styles = {
+        synced: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20',
+        pending: 'bg-amber-50 text-amber-700 ring-amber-600/20',
+        error: 'bg-red-50 text-red-700 ring-red-600/20',
+    };
+
+    const labels = {
+        synced: '✅ synced',
+        pending: '⏳ pending',
+        error: '❌ error',
+    };
+
+    return (
+        <span
+            className={clsx(
+                'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset',
+                styles[normalized] || styles.pending,
+            )}
+        >
+            {labels[normalized] || labels.pending}
+        </span>
+    );
+}
+
 export default function Index({
     users,
     filters = {},
@@ -39,6 +66,7 @@ export default function Index({
     tenants = [],
     canManageTenants = false,
     quota = null,
+    firebaseErrorsCount = 0,
 }) {
     const { flash } = usePage().props;
     const can = useCan();
@@ -128,6 +156,33 @@ export default function Index({
         );
     };
 
+    const handleSyncFirebase = async (user) => {
+        const confirmed = await fireConfirm(
+            'Синхронизировать с Firebase?',
+            `Повторная отправка данных «${user.name}» в Firebase Auth и RTDB.`,
+            'Синхронизировать',
+        );
+
+        if (!confirmed) {
+            return;
+        }
+
+        router.post(
+            route('users.sync-firebase', user.id),
+            {},
+            {
+                preserveScroll: true,
+                onSuccess: () => fireSuccess('Синхронизация с Firebase выполнена.'),
+                onError: () =>
+                    fireError('Не удалось синхронизировать пользователя с Firebase.'),
+            },
+        );
+    };
+
+    const errorUsers = users.data.filter(
+        (user) => user.firebase_status === 'error',
+    );
+
     return (
         <AdminLayout
             header={
@@ -180,6 +235,33 @@ export default function Index({
                 {quota && !quota.can_add ? (
                     <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
                         {quota.message}
+                    </div>
+                ) : null}
+
+                {firebaseErrorsCount > 0 ? (
+                    <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+                        <p>
+                            Ошибки синхронизации Firebase:{' '}
+                            <span className="font-semibold text-white">
+                                {firebaseErrorsCount}
+                            </span>
+                            . Проверьте настройки интеграции или повторите
+                            синхронизацию для пользователей ниже.
+                        </p>
+                        {canEdit && errorUsers.length > 0 ? (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                                {errorUsers.slice(0, 5).map((user) => (
+                                    <button
+                                        key={user.id}
+                                        type="button"
+                                        onClick={() => handleSyncFirebase(user)}
+                                        className="rounded-md bg-red-500/20 px-3 py-1.5 text-xs font-semibold text-red-100 hover:bg-red-500/30"
+                                    >
+                                        Повторить: {user.name}
+                                    </button>
+                                ))}
+                            </div>
+                        ) : null}
                     </div>
                 ) : null}
 
@@ -335,6 +417,9 @@ export default function Index({
                                         Статус
                                     </th>
                                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-400">
+                                        Firebase
+                                    </th>
+                                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-400">
                                         Последний вход
                                     </th>
                                     <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-400">
@@ -346,7 +431,7 @@ export default function Index({
                                 {users.data.length === 0 ? (
                                     <tr>
                                         <td
-                                            colSpan={7}
+                                            colSpan={8}
                                             className="px-4 py-10 text-center text-sm text-slate-400"
                                         >
                                             Пользователи не найдены
@@ -392,11 +477,34 @@ export default function Index({
                                                         : 'Заблокирован'}
                                                 </span>
                                             </td>
+                                            <td className="whitespace-nowrap px-4 py-3 text-sm">
+                                                <FirebaseStatusBadge
+                                                    status={user.firebase_status}
+                                                />
+                                            </td>
                                             <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-300">
                                                 {formatDate(user.last_login_at)}
                                             </td>
                                             <td className="whitespace-nowrap px-4 py-3 text-right text-sm">
                                                 <div className="flex items-center justify-end gap-1">
+                                                    {canEdit &&
+                                                        user.firebase_status ===
+                                                            'error' && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() =>
+                                                                    handleSyncFirebase(
+                                                                        user,
+                                                                    )
+                                                                }
+                                                                className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-amber-300 hover:bg-amber-500/10"
+                                                                title="Повторить синхронизацию Firebase"
+                                                            >
+                                                                <span className="hidden lg:inline">
+                                                                    Firebase
+                                                                </span>
+                                                            </button>
+                                                        )}
                                                     <Link
                                                         href={route(
                                                             'users.show',

@@ -21,12 +21,18 @@ use Spatie\Activitylog\Models\Concerns\LogsActivity;
 use Spatie\Activitylog\Support\LogOptions;
 use Spatie\Permission\Traits\HasRoles;
 
-#[Fillable(['name', 'email', 'firebase_uid', 'password', 'tenant_id', 'department_id', 'phone', 'timezone', 'locale', 'is_active', 'locked_until', 'last_login_at'])]
+#[Fillable(['name', 'email', 'firebase_uid', 'firebase_synced_at', 'firebase_status', 'password', 'tenant_id', 'department_id', 'phone', 'timezone', 'locale', 'is_active', 'locked_until', 'last_login_at'])]
 #[Hidden(['password', 'remember_token'])]
 class User extends Authenticatable
 {
     /** @use HasFactory<UserFactory> */
     use HasApiTokens, HasFactory, HasRoles, HasUuids, LogsActivity, Notifiable, SoftDeletes;
+
+    public const FIREBASE_STATUS_PENDING = 'pending';
+
+    public const FIREBASE_STATUS_SYNCED = 'synced';
+
+    public const FIREBASE_STATUS_ERROR = 'error';
 
     protected function casts(): array
     {
@@ -35,6 +41,7 @@ class User extends Authenticatable
             'last_login_at' => 'datetime',
             'last_seen_at' => 'datetime',
             'locked_until' => 'datetime',
+            'firebase_synced_at' => 'datetime',
             'password' => 'hashed',
             'is_active' => 'boolean',
         ];
