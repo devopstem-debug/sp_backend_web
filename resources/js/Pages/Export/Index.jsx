@@ -100,6 +100,7 @@ export default function Index({
     const [jsonPreview, setJsonPreview] = useState('');
     const [loading, setLoading] = useState(false);
     const [sending, setSending] = useState(false);
+    const [syncingCatalog, setSyncingCatalog] = useState(false);
     const [generatedAt, setGeneratedAt] = useState(null);
     const [syncLogs, setSyncLogs] = useState(recentSyncs);
     const [latestMap, setLatestMap] = useState(latestByStore);
@@ -254,6 +255,35 @@ export default function Index({
         );
     };
 
+    const syncCatalog = () => {
+        if (!configured) {
+            fireError(
+                'Firebase не настроен. Откройте Настройки → Интеграции и укажите Database URL + credentials JSON.',
+            );
+            return;
+        }
+
+        setSyncingCatalog(true);
+
+        router.post(
+            route('export.catalog.firebase'),
+            {},
+            {
+                preserveScroll: true,
+                onSuccess: () => {
+                    fireToast('success', 'Каталог синхронизирован с Firebase');
+                },
+                onError: (errors) => {
+                    fireError(
+                        errors.firebase ||
+                            'Не удалось синхронизировать каталог с Firebase.',
+                    );
+                },
+                onFinish: () => setSyncingCatalog(false),
+            },
+        );
+    };
+
     return (
         <AdminLayout
             header={
@@ -399,6 +429,29 @@ export default function Index({
                                     {sending
                                         ? 'Синхронизация…'
                                         : 'Синхронизировать сейчас'}
+                                </button>
+                            )}
+                            {can('firebase-export') && (
+                                <button
+                                    type="button"
+                                    onClick={syncCatalog}
+                                    disabled={syncingCatalog}
+                                    title={
+                                        configured
+                                            ? 'Синхронизировать catalog/tenants/{id}/products для офлайн-приложения'
+                                            : 'Сначала настройте Firebase в Интеграциях'
+                                    }
+                                    className={clsx(
+                                        'inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold shadow-sm disabled:cursor-not-allowed disabled:opacity-60',
+                                        configured
+                                            ? 'border border-cyan-500/40 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20'
+                                            : 'border border-slate-700 bg-[#1a2740] text-slate-300 hover:bg-slate-800',
+                                    )}
+                                >
+                                    <CloudArrowUpIcon className="h-4 w-4" />
+                                    {syncingCatalog
+                                        ? 'Каталог…'
+                                        : 'Синхронизировать каталог'}
                                 </button>
                             )}
                         </div>

@@ -27,6 +27,7 @@ use App\Http\Controllers\StandController;
 use App\Http\Controllers\StoreController;
 use App\Http\Controllers\TenantController;
 use App\Http\Controllers\UserController;
+use App\Support\Permissions;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -128,6 +129,9 @@ Route::middleware(['auth', 'user.active', 'tenant.active', 'subscription.active'
     Route::post('logs/system/clear', [LogController::class, 'clearSystem'])
         ->name('logs.system.clear');
 
+    Route::get('stores/geocode', [StoreController::class, 'geocode'])
+        ->middleware('permission:'.Permissions::CREATE_STORES.'|'.Permissions::EDIT_STORES)
+        ->name('stores.geocode');
     Route::post('stores/{id}/restore', [StoreController::class, 'restore'])
         ->name('stores.restore');
     Route::delete('stores/{id}/force', [StoreController::class, 'forceDelete'])
@@ -202,6 +206,8 @@ Route::middleware(['auth', 'user.active', 'tenant.active', 'subscription.active'
         ->name('export.download');
     Route::post('export/{storeId}/firebase', [ExportController::class, 'sendToFirebase'])
         ->name('export.firebase');
+    Route::post('export/catalog/firebase', [ExportController::class, 'syncCatalogToFirebase'])
+        ->name('export.catalog.firebase');
 
     Route::get('import', [ImportController::class, 'index'])->name('import.index');
     Route::post('import/upload', [ImportController::class, 'upload'])->name('import.upload');

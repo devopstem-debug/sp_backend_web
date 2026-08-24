@@ -117,6 +117,36 @@ users/{firebase_uid}/
 
 Нужен воркер: `php artisan queue:work`
 
+## Каталог товаров (офлайн)
+
+Путь в RTDB: `catalog/tenants/{tenant_uuid}/products/{barcode}` (глобальные SKU + private-label арендатора).
+
+| Действие | Где |
+|----------|-----|
+| Ручная синхронизация | **Экспорт → Синхронизировать каталог** |
+| Автосинхронизация | Job `SyncCatalogToFirebase` при изменении Product (debounce ~5 с) |
+
+Структура узла:
+
+```json
+{
+  "metadata": { "updatedAt": "2026-08-25 12:00", "count": 1234, "tenant_id": "..." },
+  "products": {
+    "4810123456789": {
+      "barcode": "4810123456789",
+      "name": "...",
+      "category": "...",
+      "checked": true,
+      "is_private": false,
+      "volume_ml": 500,
+      "package_type": "bottle"
+    }
+  }
+}
+```
+
+Super Admin без tenant: `catalog/global/products/...` (только глобальные SKU).
+
 ## Безопасность
 
 - Файл service account = полный доступ Admin SDK к проекту Firebase.

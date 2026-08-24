@@ -51,9 +51,6 @@ export default function Create({
             ...form,
             latitude: form.latitude === '' ? null : form.latitude,
             longitude: form.longitude === '' ? null : form.longitude,
-            area_sqm: form.area_sqm === '' ? null : form.area_sqm,
-            radius_meters:
-                form.radius_meters === '' ? 100 : Number(form.radius_meters),
         }));
 
         post(route('stores.store'), {
@@ -75,6 +72,7 @@ export default function Create({
 
     return (
         <AdminLayout
+            flush
             header={
                 <h1 className="text-xl font-semibold leading-tight text-white">
                     Новый магазин
@@ -83,28 +81,34 @@ export default function Create({
         >
             <Head title="Новый магазин" />
 
-            {quota ? (
-                <div className="mb-4 rounded-lg border border-slate-700 bg-slate-900/60 px-4 py-3 text-sm text-slate-300">
-                    Магазины по тарифу:{' '}
-                    <span className="font-semibold text-white">
-                        {quota.used} / {quota.max}
-                    </span>
-                    {quota.message ? (
-                        <p className="mt-1 text-amber-300">{quota.message}</p>
-                    ) : null}
-                </div>
-            ) : null}
+            <div className="flex h-full min-h-0 flex-col">
+                {quota ? (
+                    <div className="shrink-0 border-b border-slate-800 bg-amber-500/5 px-4 py-2.5 text-sm text-slate-300 sm:px-6">
+                        Магазины по тарифу:{' '}
+                        <span className="font-semibold text-white">
+                            {quota.used} / {quota.max}
+                        </span>
+                        {quota.message ? (
+                            <span className="ml-2 text-amber-300">
+                                {quota.message}
+                            </span>
+                        ) : null}
+                    </div>
+                ) : null}
 
-            <StoreForm
-                data={data}
-                setData={setData}
-                errors={errors}
-                clientErrors={clientErrors}
-                processing={processing}
-                tenants={tenants}
-                submitLabel="Создать"
-                onSubmit={submit}
-            />
+                <div className="min-h-0 flex-1">
+                    <StoreForm
+                        data={data}
+                        setData={setData}
+                        errors={errors}
+                        clientErrors={clientErrors}
+                        processing={processing}
+                        tenants={tenants}
+                        submitLabel="Создать"
+                        onSubmit={submit}
+                    />
+                </div>
+            </div>
         </AdminLayout>
     );
 }

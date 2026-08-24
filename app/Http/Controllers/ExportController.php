@@ -7,6 +7,7 @@ namespace App\Http\Controllers;
 use App\Jobs\SyncStoreToFirebase;
 use App\Models\Store;
 use App\Models\SyncLog;
+use App\Services\FirebaseCatalogService;
 use App\Services\FirebaseService;
 use App\Services\NotificationService;
 use App\Services\StoreExportService;
@@ -34,7 +35,7 @@ class ExportController extends Controller implements HasMiddleware
             new Middleware('permission:'.Permissions::VIEW_EXPORT, only: ['index']),
             new Middleware('permission:'.Permissions::GENERATE_EXPORT, only: ['generate']),
             new Middleware('permission:'.Permissions::DOWNLOAD_EXPORT, only: ['download']),
-            new Middleware('permission:'.Permissions::FIREBASE_EXPORT, only: ['sendToFirebase']),
+            new Middleware('permission:'.Permissions::FIREBASE_EXPORT, only: ['sendToFirebase', 'syncCatalogToFirebase']),
         ];
     }
 
@@ -42,6 +43,7 @@ class ExportController extends Controller implements HasMiddleware
         private readonly StoreExportService $exports,
         private readonly NotificationService $notifications,
         private readonly FirebaseService $firebase,
+        private readonly FirebaseCatalogService $catalog,
     ) {}
 
     public function index(): Response
@@ -174,6 +176,65 @@ class ExportController extends Controller implements HasMiddleware
                     'success' => true,
                     'message' => $message,
                     'latest' => $latest ? $this->transformSyncLog($latest, $user?->timezone ?? 'UTC') : null,
+                ]);
+            }
+
+            return redirect()
+                ->route('export.index')
+                ->with('success', $message);
+        } catch (Throwable $exception) {
+            $errorMessage = $exception instanceof ValidationException
+                ? collect($exception->errors())->flatten()->first() ?: $exception->getMessage()
+                : $exception->getMessage();
+
+            if (! $exception instanceof ValidationException) {
+                $this->notifyExportFailure($errorMessage);
+            }
+
+            if ($request->expectsJson() || $request->is('api/*')) {
+                $status = $exception instanceof ValidationException ? 422 : 500;
+
+                return response()->json([
+                    'success' => false,
+                    'message' => $errorMessage,
+                ], $status);
+            }
+
+            if ($exception instanceof ValidationException) {
+                throw $exception;
+            }
+
+            return redirect()
+                ->route('export.index')
+                ->with('error', $errorMessage);
+        }
+    }
+
+    public function syncCatalogToFirebase(Request $request): RedirectResponse|JsonResponse
+    {
+        $user = Auth::user();
+        $tenantId = $this->catalog->resolveTenantIdForActor();
+
+        try {
+            if (! $this->catalog->isConfigured($tenantId)) {
+                throw ValidationException::withMessages([
+                    'firebase' => 'Firebase не настроен. Укажите Database URL и credentials в Настройки → Интеграции.',
+                ]);
+            }
+
+            $result = $this->catalog->sync($tenantId);
+            $message = sprintf(
+                'Каталог синхронизирован с Firebase (%d SKU, %s).',
+                $result['count'],
+                $result['updated_at'],
+            );
+
+            if ($request->expectsJson() || $request->is('api/*')) {
+                return response()->json([
+                    'success' => true,
+                    'message' => $message,
+                    'count' => $result['count'],
+                    'updated_at' => $result['updated_at'],
                 ]);
             }
 

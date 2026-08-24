@@ -29,9 +29,6 @@ export default function Edit({ store, tenants = [] }) {
             ...form,
             latitude: form.latitude === '' ? null : form.latitude,
             longitude: form.longitude === '' ? null : form.longitude,
-            area_sqm: form.area_sqm === '' ? null : form.area_sqm,
-            radius_meters:
-                form.radius_meters === '' ? 100 : Number(form.radius_meters),
         }));
 
         put(route('stores.update', store.id), {
@@ -42,6 +39,7 @@ export default function Edit({ store, tenants = [] }) {
 
     return (
         <AdminLayout
+            flush
             header={
                 <h1 className="text-xl font-semibold leading-tight text-white">
                     Редактирование магазина
@@ -50,16 +48,18 @@ export default function Edit({ store, tenants = [] }) {
         >
             <Head title={`Редактирование: ${store.name}`} />
 
-            <StoreForm
-                data={data}
-                setData={setData}
-                errors={errors}
-                clientErrors={clientErrors}
-                processing={processing}
-                tenants={[]}
-                submitLabel="Обновить"
-                onSubmit={submit}
-            />
+            <div className="h-full min-h-0">
+                <StoreForm
+                    data={data}
+                    setData={setData}
+                    errors={errors}
+                    clientErrors={clientErrors}
+                    processing={processing}
+                    tenants={tenants}
+                    submitLabel="Обновить"
+                    onSubmit={submit}
+                />
+            </div>
         </AdminLayout>
     );
 }

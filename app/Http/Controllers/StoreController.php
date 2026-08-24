@@ -8,13 +8,17 @@ use App\Http\Controllers\Concerns\AuthorizesResourcePermissions;
 use App\Http\Requests\StoreRequest;
 use App\Models\Store;
 use App\Models\Tenant;
+use App\Models\User;
+use App\Services\GeocodingService;
 use App\Services\TenantQuotaService;
 use App\Support\Permissions;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\RateLimiter;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -90,6 +94,42 @@ class StoreController extends Controller implements HasMiddleware
             'tenants' => $this->tenantsForSelect(),
             'defaultTenantId' => $request->string('tenant_id')->toString() ?: null,
             'quota' => $quota,
+        ]);
+    }
+
+    public function geocode(Request $request, GeocodingService $geocoding): JsonResponse
+    {
+        $user = $request->user();
+        $rateKey = 'stores-geocode:'.($user?->id ?? $request->ip());
+
+        if (RateLimiter::tooManyAttempts($rateKey, 20)) {
+            return response()->json([
+                'message' => 'Слишком много запросов. Подождите минуту и попробуйте снова.',
+            ], 429);
+        }
+
+        RateLimiter::hit($rateKey, 60);
+
+        $validated = $request->validate([
+            'address' => ['required', 'string', 'max:500'],
+            'city' => ['nullable', 'string', 'max:100'],
+        ], [
+            'address.required' => 'Укажите адрес для поиска на карте.',
+        ]);
+
+        try {
+            $results = $geocoding->search(
+                (string) $validated['address'],
+                isset($validated['city']) ? (string) $validated['city'] : null,
+            );
+        } catch (\RuntimeException $exception) {
+            return response()->json([
+                'message' => $exception->getMessage(),
+            ], 422);
+        }
+
+        return response()->json([
+            'results' => $results,
         ]);
     }
 
@@ -234,7 +274,7 @@ class StoreController extends Controller implements HasMiddleware
     /**
      * @return array{used: int, max: int, remaining: int, can_add: bool, message: string|null}|null
      */
-    private function storeQuotaForActor(?\App\Models\User $actor): ?array
+    private function storeQuotaForActor(?User $actor): ?array
     {
         if (! $actor?->tenant_id) {
             return null;

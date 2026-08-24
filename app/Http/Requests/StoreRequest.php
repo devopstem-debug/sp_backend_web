@@ -29,15 +29,11 @@ class StoreRequest extends FormRequest
     {
         $rules = [
             'name' => ['required', 'string', 'max:255'],
-            'address' => ['nullable', 'string', 'max:2000'],
+            'address' => ['required', 'string', 'max:2000'],
             'city' => ['nullable', 'string', 'max:100'],
-            'latitude' => ['nullable', 'numeric', 'between:-90,90'],
-            'longitude' => ['nullable', 'numeric', 'between:-180,180'],
-            'radius_meters' => ['nullable', 'integer', 'min:1', 'max:100000'],
-            'area_sqm' => ['nullable', 'numeric', 'min:0', 'max:999999.99'],
+            'latitude' => ['required', 'numeric', 'between:-90,90'],
+            'longitude' => ['required', 'numeric', 'between:-180,180'],
             'status' => ['required', Rule::in(['active', 'repair', 'decommissioned'])],
-            'working_hours_json' => ['nullable', 'string'],
-            'contact_info_json' => ['nullable', 'string'],
         ];
 
         if ($this->user()?->tenant_id === null && $this->user()?->isSuperAdmin()) {
@@ -54,9 +50,12 @@ class StoreRequest extends FormRequest
     {
         return [
             'name.required' => 'Укажите название магазина.',
+            'address.required' => 'Укажите адрес магазина.',
             'status.required' => 'Выберите статус.',
             'status.in' => 'Недопустимый статус.',
             'tenant_id.required' => 'Выберите арендатора.',
+            'latitude.required' => 'Укажите точку на карте (широта).',
+            'longitude.required' => 'Укажите точку на карте (долгота).',
             'latitude.between' => 'Широта должна быть от -90 до 90.',
             'longitude.between' => 'Долгота должна быть от -180 до 180.',
         ];
@@ -65,26 +64,6 @@ class StoreRequest extends FormRequest
     public function withValidator(Validator $validator): void
     {
         $validator->after(function (Validator $validator): void {
-            foreach (['working_hours_json', 'contact_info_json'] as $field) {
-                $raw = $this->input($field);
-
-                if ($raw === null || $raw === '') {
-                    continue;
-                }
-
-                try {
-                    $decoded = json_decode((string) $raw, true, 512, JSON_THROW_ON_ERROR);
-                } catch (\JsonException) {
-                    $validator->errors()->add($field, 'Некорректный JSON.');
-
-                    continue;
-                }
-
-                if (! is_array($decoded)) {
-                    $validator->errors()->add($field, 'JSON должен быть объектом или массивом.');
-                }
-            }
-
             if (! $this->isMethod('POST')) {
                 return;
             }
@@ -127,31 +106,7 @@ class StoreRequest extends FormRequest
             'city' => $validated['city'] ?? null,
             'latitude' => $validated['latitude'] ?? null,
             'longitude' => $validated['longitude'] ?? null,
-            'radius_meters' => $validated['radius_meters'] ?? 100,
-            'area_sqm' => $validated['area_sqm'] ?? null,
             'status' => $validated['status'],
-            'working_hours' => $this->decodeJsonField('working_hours_json'),
-            'contact_info' => $this->decodeJsonField('contact_info_json'),
         ];
-    }
-
-    /**
-     * @return array<string, mixed>|null
-     */
-    private function decodeJsonField(string $key): ?array
-    {
-        $raw = $this->input($key);
-
-        if ($raw === null || $raw === '') {
-            return null;
-        }
-
-        try {
-            $decoded = json_decode((string) $raw, true, 512, JSON_THROW_ON_ERROR);
-        } catch (\JsonException) {
-            return null;
-        }
-
-        return is_array($decoded) ? $decoded : null;
     }
 }
