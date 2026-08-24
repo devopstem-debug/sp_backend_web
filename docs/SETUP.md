@@ -53,6 +53,9 @@ SUPER_ADMIN_EMAIL=
 SUPER_ADMIN_PASSWORD=
 ```
 
+На production после `php artisan config:cache` сидер читает их через `config('services.super_admin.*')`.
+Если админ не создаётся — сначала `php artisan config:clear`, затем снова `config:cache` (или seed до кэша).
+
 ### Frontend
 
 ```bash

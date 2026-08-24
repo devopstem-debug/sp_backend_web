@@ -12,13 +12,17 @@ class SuperAdminSeeder extends Seeder
 {
     public function run(): void
     {
-        $email = (string) env('SUPER_ADMIN_EMAIL', '');
-        $password = (string) env('SUPER_ADMIN_PASSWORD', '');
-        $name = (string) env('SUPER_ADMIN_NAME', 'Super Admin');
+        // Use config() — env() is empty when config is cached (typical on VPS).
+        $email = trim((string) config('services.super_admin.email', ''));
+        $password = (string) config('services.super_admin.password', '');
+        $name = trim((string) config('services.super_admin.name', 'Super Admin'));
 
         if ($email === '' || $password === '') {
             $this->command?->warn(
                 'SUPER_ADMIN_EMAIL и SUPER_ADMIN_PASSWORD не заданы в .env — администратор не создан.',
+            );
+            $this->command?->warn(
+                'Если переменные есть в .env: выполните php artisan config:clear && php artisan config:cache, затем снова db:seed.',
             );
 
             return;
@@ -39,5 +43,7 @@ class SuperAdminSeeder extends Seeder
         );
 
         $user->syncRoles([Permissions::ROLE_SUPER_ADMIN]);
+
+        $this->command?->info("Super Admin создан/обновлён: {$email}");
     }
 }
