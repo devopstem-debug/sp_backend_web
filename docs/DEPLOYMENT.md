@@ -9,7 +9,30 @@
 - `node_modules/`, `vendor/` — ставить на сервере
 - Локальные логи и кэш
 
-## Чеклист на сервере
+## Быстрый старт скриптами
+
+На **новом** Ubuntu 22.04/24.04 VPS (репозиторий уже склонирован):
+
+```bash
+cd /var/www/sp_backend_web
+sudo DOMAIN=your-domain.tld WITH_SSL=1 ./scripts/install.sh
+```
+
+Обновление с GitHub:
+
+```bash
+cd /var/www/sp_backend_web
+sudo ./scripts/deploy.sh
+```
+
+Опции: `./scripts/install.sh --help`, `./scripts/deploy.sh --help`.
+
+Скрипты ставят Nginx, PHP 8.3, PostgreSQL, Redis, Supervisor (queue + reverb), cron `schedule:run`.  
+**Не** кладут Firebase JSON и не заменяют ручную проверку `.env`/DNS.
+
+---
+
+## Чеклист на сервере (вручную)
 
 1. **Клон репозитория**
 
@@ -75,6 +98,22 @@ server {
     root /var/www/sp_backend_web/public;
 
     index index.php;
+    client_max_body_size 64M;
+
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 5;
+    gzip_min_length 256;
+    gzip_types text/plain text/css application/json application/javascript
+               application/xml image/svg+xml font/woff2;
+
+    location ^~ /build/ {
+        access_log off;
+        expires 30d;
+        add_header Cache-Control "public, max-age=2592000, immutable";
+        try_files $uri =404;
+    }
 
     location / {
         try_files $uri $uri/ /index.php?$query_string;
@@ -100,6 +139,14 @@ server {
 }
 ```
 
+Шаблон для `install.sh`: `scripts/templates/nginx-site.conf.tpl` (gzip + кэш `/build/`).
+
+На **уже работающем** VPS добавь блоки `gzip` и `location ^~ /build/` в свой site-config, затем:
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
 6. **Фоновые процессы**
 
 - `queue:work` (Supervisor)
@@ -111,6 +158,14 @@ server {
 Скопировать service account на сервер, выставить `FIREBASE_*` или загрузить через UI (Super Admin / Программист). См. [FIREBASE.md](FIREBASE.md).
 
 ## Обновление с GitHub
+
+Предпочтительно:
+
+```bash
+sudo ./scripts/deploy.sh
+```
+
+Или вручную:
 
 ```bash
 git pull

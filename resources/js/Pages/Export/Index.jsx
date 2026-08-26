@@ -1,4 +1,4 @@
-import { Head, Link, router, usePage } from '@inertiajs/react';
+import { Head, router, usePage } from '@inertiajs/react';
 import {
     ArrowDownTrayIcon,
     ArrowPathIcon,
@@ -240,8 +240,11 @@ export default function Index({
             {},
             {
                 preserveScroll: true,
-                onSuccess: () => {
-                    fireToast('success', 'Синхронизация выполнена');
+                onSuccess: (page) => {
+                    const msg =
+                        page?.props?.flash?.success ||
+                        'Магазин и каталог синхронизированы с Firebase';
+                    fireToast('success', msg);
                 },
                 onError: (errors) => {
                     fireError(
@@ -263,15 +266,23 @@ export default function Index({
             return;
         }
 
+        if (!storeId) {
+            fireError('Выберите магазин — каталог синхронизируется для его арендатора.');
+            return;
+        }
+
         setSyncingCatalog(true);
 
         router.post(
             route('export.catalog.firebase'),
-            {},
+            { store_id: storeId },
             {
                 preserveScroll: true,
-                onSuccess: () => {
-                    fireToast('success', 'Каталог синхронизирован с Firebase');
+                onSuccess: (page) => {
+                    const msg =
+                        page?.props?.flash?.success ||
+                        'Каталог синхронизирован с Firebase';
+                    fireToast('success', msg);
                 },
                 onError: (errors) => {
                     fireError(
@@ -298,8 +309,8 @@ export default function Index({
                 <div className="rounded-xl bg-[#152033] p-4 shadow-sm ring-1 ring-slate-800 sm:p-6">
                     <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                         <p className="text-sm text-slate-400">
-                            Автосинхронизация с Firebase при изменении магазинов,
-                            оборудования и планограмм. Очередь:{' '}
+                            «Синхронизировать сейчас» отправляет магазин и полный
+                            каталог товаров. Очередь:{' '}
                             <code className="text-slate-300">php artisan queue:work</code>
                         </p>
                         <span
@@ -415,7 +426,7 @@ export default function Index({
                                     disabled={sending || !storeId}
                                     title={
                                         configured
-                                            ? 'Принудительная синхронизация сейчас'
+                                            ? 'Магазин (stores/…) + полный каталог товаров'
                                             : 'Сначала настройте Firebase в Интеграциях'
                                     }
                                     className={clsx(
@@ -435,10 +446,10 @@ export default function Index({
                                 <button
                                     type="button"
                                     onClick={syncCatalog}
-                                    disabled={syncingCatalog}
+                                    disabled={syncingCatalog || !storeId}
                                     title={
                                         configured
-                                            ? 'Синхронизировать catalog/tenants/{id}/products для офлайн-приложения'
+                                            ? 'Только полный каталог catalog/tenants/{id}/products'
                                             : 'Сначала настройте Firebase в Интеграциях'
                                     }
                                     className={clsx(
@@ -459,15 +470,10 @@ export default function Index({
 
                     {!configured && (
                         <p className="mt-3 text-sm text-amber-300/90">
-                            Чтобы синхронизировать данные, заполните Project ID,
-                            Database URL и загрузите service account JSON в{' '}
-                            <Link
-                                href="/settings?tab=integrations"
-                                className="underline hover:text-amber-200"
-                            >
-                                Настройки → Интеграции
-                            </Link>
-                            .
+                            Чтобы синхронизировать данные, укажите в{' '}
+                            <code className="text-slate-300">.env</code> переменные{' '}
+                            <code className="text-slate-300">FIREBASE_*</code> и
+                            положите service account JSON на сервер (см. docs/FIREBASE.md).
                         </p>
                     )}
 

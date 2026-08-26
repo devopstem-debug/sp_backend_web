@@ -69,6 +69,8 @@ class HandleInertiaRequests extends Middleware
                 'success' => fn () => $request->session()->get('success'),
                 'error' => fn () => $request->session()->get('error'),
                 'warning' => fn () => $request->session()->get('warning'),
+                'two_factor_setup' => fn () => $request->session()->get('two_factor_setup'),
+                'two_factor_recovery_codes' => fn () => $request->session()->get('two_factor_recovery_codes'),
             ],
             'loginLockoutUntil' => function () use ($request): ?int {
                 $until = $request->session()->get('login_lockout_until');

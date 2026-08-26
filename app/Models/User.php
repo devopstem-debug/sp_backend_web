@@ -21,8 +21,8 @@ use Spatie\Activitylog\Models\Concerns\LogsActivity;
 use Spatie\Activitylog\Support\LogOptions;
 use Spatie\Permission\Traits\HasRoles;
 
-#[Fillable(['name', 'email', 'firebase_uid', 'firebase_synced_at', 'firebase_status', 'password', 'tenant_id', 'department_id', 'phone', 'timezone', 'locale', 'is_active', 'locked_until', 'last_login_at'])]
-#[Hidden(['password', 'remember_token'])]
+#[Fillable(['name', 'email', 'firebase_uid', 'firebase_synced_at', 'firebase_status', 'password', 'two_factor_secret', 'two_factor_recovery_codes', 'two_factor_confirmed_at', 'tenant_id', 'department_id', 'phone', 'timezone', 'locale', 'is_active', 'locked_until', 'last_login_at'])]
+#[Hidden(['password', 'remember_token', 'two_factor_secret', 'two_factor_recovery_codes'])]
 class User extends Authenticatable
 {
     /** @use HasFactory<UserFactory> */
@@ -42,6 +42,7 @@ class User extends Authenticatable
             'last_seen_at' => 'datetime',
             'locked_until' => 'datetime',
             'firebase_synced_at' => 'datetime',
+            'two_factor_confirmed_at' => 'datetime',
             'password' => 'hashed',
             'is_active' => 'boolean',
         ];

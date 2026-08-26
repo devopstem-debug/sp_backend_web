@@ -4,22 +4,26 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
-use App\Http\Requests\UpdateSettingsIntegrationsRequest;
 use App\Http\Requests\UpdateSettingsPasswordRequest;
 use App\Http\Requests\UpdateSettingsProfileRequest;
-use App\Models\Tenant;
 use App\Services\SettingsService;
+use App\Services\TwoFactorService;
 use App\Support\Permissions;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
+use RuntimeException;
 
 class SettingsController extends Controller implements HasMiddleware
 {
     public function __construct(
         private readonly SettingsService $settings,
+        private readonly TwoFactorService $twoFactor,
     ) {}
 
     /**
@@ -29,12 +33,16 @@ class SettingsController extends Controller implements HasMiddleware
     {
         return [
             new Middleware(
-                'permission:'.Permissions::EDIT_PROFILE.'|'.Permissions::EDIT_SECURITY.'|'.Permissions::EDIT_INTEGRATIONS,
+                'permission:'.Permissions::EDIT_PROFILE.'|'.Permissions::EDIT_SECURITY,
                 only: ['index'],
             ),
             new Middleware('permission:'.Permissions::EDIT_PROFILE, only: ['updateProfile']),
-            new Middleware('permission:'.Permissions::EDIT_SECURITY, only: ['updatePassword']),
-            new Middleware('permission:'.Permissions::EDIT_INTEGRATIONS, only: ['updateIntegrations']),
+            new Middleware('permission:'.Permissions::EDIT_SECURITY, only: [
+                'updatePassword',
+                'enableTwoFactor',
+                'confirmTwoFactor',
+                'disableTwoFactor',
+            ]),
         ];
     }
 
@@ -42,35 +50,6 @@ class SettingsController extends Controller implements HasMiddleware
     {
         $user = auth()->user();
         abort_unless($user !== null, 401);
-
-        $tenantId = $this->settings->resolveTenantId($user);
-        $integrations = $this->settings->integrationsPayload($tenantId);
-
-        $tenant = null;
-        if ($user->isSuperAdmin()) {
-            $tenantModel = $user->tenant_id
-                ? Tenant::query()->find($user->tenant_id)
-                : Tenant::query()->where('is_active', true)->orderBy('name')->first();
-
-            if ($tenantModel) {
-                $tenant = [
-                    'id' => $tenantModel->id,
-                    'name' => $tenantModel->name,
-                    'domain' => $tenantModel->domain,
-                    'is_active' => (bool) $tenantModel->is_active,
-                ];
-            }
-        } elseif ($user->tenant_id) {
-            $tenantModel = Tenant::query()->find($user->tenant_id);
-            if ($tenantModel) {
-                $tenant = [
-                    'id' => $tenantModel->id,
-                    'name' => $tenantModel->name,
-                    'domain' => $tenantModel->domain,
-                    'is_active' => (bool) $tenantModel->is_active,
-                ];
-            }
-        }
 
         return Inertia::render('Settings/Index', [
             'profile' => [
@@ -80,10 +59,8 @@ class SettingsController extends Controller implements HasMiddleware
                 'timezone' => $user->timezone ?: 'UTC',
                 'locale' => $user->locale ?: 'ru',
             ],
-            'tenant' => $tenant,
-            'integrations' => $integrations,
             'security' => [
-                'two_factor_enabled' => false,
+                'two_factor_enabled' => $this->twoFactor->isEnabled($user),
             ],
             'timezones' => $this->timezoneOptions(),
             'locales' => [
@@ -93,7 +70,6 @@ class SettingsController extends Controller implements HasMiddleware
             'can' => [
                 'profile' => (bool) $user->can(Permissions::EDIT_PROFILE),
                 'security' => (bool) $user->can(Permissions::EDIT_SECURITY),
-                'integrations' => (bool) $user->can(Permissions::EDIT_INTEGRATIONS),
             ],
         ]);
     }
@@ -130,22 +106,79 @@ class SettingsController extends Controller implements HasMiddleware
             ->with('success', 'Пароль изменён.');
     }
 
-    public function updateIntegrations(UpdateSettingsIntegrationsRequest $request): RedirectResponse
+    public function enableTwoFactor(Request $request): RedirectResponse
     {
         $user = $request->user();
         abort_unless($user !== null, 401);
 
-        $tenantId = $this->settings->resolveTenantId($user);
+        if ($this->twoFactor->isEnabled($user)) {
+            return redirect()
+                ->route('settings.index', ['tab' => 'security'])
+                ->with('error', 'Двухфакторная аутентификация уже включена.');
+        }
 
-        $this->settings->updateIntegrations(
-            $tenantId,
-            $request->safe()->except('firebase_credentials'),
-            $request->file('firebase_credentials'),
-        );
+        $setup = $this->twoFactor->beginSetup($user);
 
         return redirect()
-            ->route('settings.index', ['tab' => 'integrations'])
-            ->with('success', 'Интеграции сохранены.');
+            ->route('settings.index', ['tab' => 'security'])
+            ->with('two_factor_setup', $setup);
+    }
+
+    public function confirmTwoFactor(Request $request): RedirectResponse
+    {
+        $user = $request->user();
+        abort_unless($user !== null, 401);
+
+        $validated = $request->validate([
+            'code' => ['required', 'string', 'min:6', 'max:64'],
+        ], [
+            'code.required' => 'Введите код из приложения-аутентификатора.',
+        ]);
+
+        try {
+            $recoveryCodes = $this->twoFactor->confirmSetup($user, $validated['code']);
+        } catch (RuntimeException $exception) {
+            throw ValidationException::withMessages([
+                'code' => $exception->getMessage(),
+            ]);
+        }
+
+        return redirect()
+            ->route('settings.index', ['tab' => 'security'])
+            ->with('success', 'Двухфакторная аутентификация включена.')
+            ->with('two_factor_recovery_codes', $recoveryCodes);
+    }
+
+    public function disableTwoFactor(Request $request): RedirectResponse
+    {
+        $user = $request->user();
+        abort_unless($user !== null, 401);
+
+        $validated = $request->validate([
+            'password' => ['required', 'string'],
+            'code' => ['required', 'string', 'min:6', 'max:64'],
+        ], [
+            'password.required' => 'Введите текущий пароль.',
+            'code.required' => 'Введите код 2FA или recovery-код.',
+        ]);
+
+        if (! Hash::check($validated['password'], (string) $user->password)) {
+            throw ValidationException::withMessages([
+                'password' => 'Неверный пароль.',
+            ]);
+        }
+
+        if (! $this->twoFactor->verify($user, $validated['code'])) {
+            throw ValidationException::withMessages([
+                'code' => 'Неверный код 2FA.',
+            ]);
+        }
+
+        $this->twoFactor->disable($user);
+
+        return redirect()
+            ->route('settings.index', ['tab' => 'security'])
+            ->with('success', 'Двухфакторная аутентификация отключена.');
     }
 
     /**

@@ -169,12 +169,19 @@ class ExportController extends Controller implements HasMiddleware
                 ]);
             }
 
-            $message = 'Магазин синхронизирован с Firebase.';
+            $catalogTenantId = $store->tenant_id ?? $this->catalog->resolveTenantIdForActor();
+            $catalogResult = $this->catalog->sync($catalogTenantId);
+
+            $message = sprintf(
+                'Магазин и каталог синхронизированы с Firebase (%d SKU).',
+                $catalogResult['count'],
+            );
 
             if ($request->expectsJson() || $request->is('api/*')) {
                 return response()->json([
                     'success' => true,
                     'message' => $message,
+                    'catalog_count' => $catalogResult['count'],
                     'latest' => $latest ? $this->transformSyncLog($latest, $user?->timezone ?? 'UTC') : null,
                 ]);
             }
@@ -213,9 +220,15 @@ class ExportController extends Controller implements HasMiddleware
     public function syncCatalogToFirebase(Request $request): RedirectResponse|JsonResponse
     {
         $user = Auth::user();
-        $tenantId = $this->catalog->resolveTenantIdForActor();
+        $tenantId = $this->resolveCatalogTenantId($request);
 
         try {
+            if ($tenantId === null && $user?->isSuperAdmin()) {
+                throw ValidationException::withMessages([
+                    'firebase' => 'Выберите магазин на странице Экспорт — каталог пишется для арендатора этого магазина.',
+                ]);
+            }
+
             if (! $this->catalog->isConfigured($tenantId)) {
                 throw ValidationException::withMessages([
                     'firebase' => 'Firebase не настроен. Укажите Database URL и credentials в Настройки → Интеграции.',
@@ -324,6 +337,21 @@ class ExportController extends Controller implements HasMiddleware
     private function findAuthorizedStore(string $storeId): Store
     {
         return Store::query()->findOrFail($storeId);
+    }
+
+    private function resolveCatalogTenantId(Request $request): ?string
+    {
+        $storeId = $request->input('store_id');
+
+        if (is_string($storeId) && $storeId !== '') {
+            $store = Store::query()->find($storeId);
+
+            if ($store?->tenant_id) {
+                return (string) $store->tenant_id;
+            }
+        }
+
+        return $this->catalog->resolveTenantIdForActor();
     }
 
     /**

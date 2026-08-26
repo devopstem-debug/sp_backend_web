@@ -1,11 +1,5 @@
 import { Head, router, useForm, usePage } from '@inertiajs/react';
-import {
-    CheckCircleIcon,
-    ExclamationCircleIcon,
-    KeyIcon,
-    PuzzlePieceIcon,
-    UserCircleIcon,
-} from '@heroicons/react/24/outline';
+import { KeyIcon, UserCircleIcon } from '@heroicons/react/24/outline';
 import { useEffect, useMemo, useState } from 'react';
 import AdminLayout from '@/layouts/AdminLayout';
 import { useCan } from '@/lib/permissions';
@@ -15,7 +9,6 @@ import clsx from 'clsx';
 const TABS = [
     { id: 'profile', label: 'Профиль', icon: UserCircleIcon, permission: 'edit-profile' },
     { id: 'security', label: 'Безопасность', icon: KeyIcon, permission: 'edit-security' },
-    { id: 'integrations', label: 'Интеграции', icon: PuzzlePieceIcon, permission: 'edit-integrations' },
 ];
 
 function FieldError({ message }) {
@@ -23,37 +16,15 @@ function FieldError({ message }) {
         return null;
     }
 
-    return <p className="mt-1.5 text-sm text-red-600">{message}</p>;
+    return <p className="mt-1.5 text-sm text-red-400">{message}</p>;
 }
 
 function inputClass(hasError) {
     return clsx(
-        'mt-1 block w-full rounded-lg border px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/40',
+        'mt-1 block w-full rounded-lg border bg-[#0e172b] px-3 py-2 text-sm text-slate-100 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/40',
         hasError
-            ? 'border-red-400 focus:border-red-500'
+            ? 'border-red-400/70 focus:border-red-500'
             : 'border-slate-700 focus:border-indigo-500',
-    );
-}
-
-function StatusBadge({ status }) {
-    const ok = status === 'configured';
-
-    return (
-        <span
-            className={clsx(
-                'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold',
-                ok
-                    ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
-                    : 'bg-amber-50 text-amber-700 ring-1 ring-amber-200',
-            )}
-        >
-            {ok ? (
-                <CheckCircleIcon className="h-3.5 w-3.5" />
-            ) : (
-                <ExclamationCircleIcon className="h-3.5 w-3.5" />
-            )}
-            {ok ? 'Настроено' : 'Не настроено'}
-        </span>
     );
 }
 
@@ -177,24 +148,63 @@ function ProfileTab({ profile, timezones, locales }) {
 }
 
 function SecurityTab({ security }) {
-    const { data, setData, patch, processing, errors, reset } = useForm({
+    const { flash, errors: pageErrors = {} } = usePage().props;
+    const setup = flash?.two_factor_setup || null;
+    const recoveryCodes = flash?.two_factor_recovery_codes || null;
+
+    const passwordForm = useForm({
         current_password: '',
         new_password: '',
         new_password_confirmation: '',
     });
 
-    const submit = (e) => {
+    const confirmForm = useForm({ code: '' });
+    const disableForm = useForm({ password: '', code: '' });
+    const [showDisable, setShowDisable] = useState(false);
+
+    const submitPassword = (e) => {
         e.preventDefault();
-        patch(route('settings.password.update'), {
+        passwordForm.patch(route('settings.password.update'), {
             preserveScroll: true,
-            onSuccess: () => reset(),
+            onSuccess: () => passwordForm.reset(),
             onError: () => fireError('Не удалось сменить пароль.'),
+        });
+    };
+
+    const startTwoFactor = () => {
+        router.post(
+            route('settings.two-factor.enable'),
+            {},
+            {
+                preserveScroll: true,
+                onError: () => fireError('Не удалось начать настройку 2FA.'),
+            },
+        );
+    };
+
+    const confirmTwoFactor = (e) => {
+        e.preventDefault();
+        confirmForm.post(route('settings.two-factor.confirm'), {
+            preserveScroll: true,
+            onError: () => fireError('Неверный код подтверждения.'),
+        });
+    };
+
+    const disableTwoFactor = (e) => {
+        e.preventDefault();
+        disableForm.post(route('settings.two-factor.disable'), {
+            preserveScroll: true,
+            onSuccess: () => {
+                setShowDisable(false);
+                disableForm.reset();
+            },
+            onError: () => fireError('Не удалось отключить 2FA.'),
         });
     };
 
     return (
         <div className="space-y-8">
-            <form onSubmit={submit} className="space-y-5" noValidate>
+            <form onSubmit={submitPassword} className="space-y-5" noValidate>
                 <h3 className="text-sm font-semibold text-white">Смена пароля</h3>
 
                 <div>
@@ -207,13 +217,15 @@ function SecurityTab({ security }) {
                     <input
                         id="current_password"
                         type="password"
-                        value={data.current_password}
-                        onChange={(e) => setData('current_password', e.target.value)}
-                        className={inputClass(errors.current_password)}
+                        value={passwordForm.data.current_password}
+                        onChange={(e) =>
+                            passwordForm.setData('current_password', e.target.value)
+                        }
+                        className={inputClass(passwordForm.errors.current_password)}
                         autoComplete="current-password"
                         required
                     />
-                    <FieldError message={errors.current_password} />
+                    <FieldError message={passwordForm.errors.current_password} />
                 </div>
 
                 <div className="grid gap-5 sm:grid-cols-2">
@@ -227,13 +239,15 @@ function SecurityTab({ security }) {
                         <input
                             id="new_password"
                             type="password"
-                            value={data.new_password}
-                            onChange={(e) => setData('new_password', e.target.value)}
-                            className={inputClass(errors.new_password)}
+                            value={passwordForm.data.new_password}
+                            onChange={(e) =>
+                                passwordForm.setData('new_password', e.target.value)
+                            }
+                            className={inputClass(passwordForm.errors.new_password)}
                             autoComplete="new-password"
                             required
                         />
-                        <FieldError message={errors.new_password} />
+                        <FieldError message={passwordForm.errors.new_password} />
                     </div>
                     <div>
                         <label
@@ -245,11 +259,16 @@ function SecurityTab({ security }) {
                         <input
                             id="new_password_confirmation"
                             type="password"
-                            value={data.new_password_confirmation}
+                            value={passwordForm.data.new_password_confirmation}
                             onChange={(e) =>
-                                setData('new_password_confirmation', e.target.value)
+                                passwordForm.setData(
+                                    'new_password_confirmation',
+                                    e.target.value,
+                                )
                             }
-                            className={inputClass(errors.new_password_confirmation)}
+                            className={inputClass(
+                                passwordForm.errors.new_password_confirmation,
+                            )}
                             autoComplete="new-password"
                             required
                         />
@@ -259,208 +278,141 @@ function SecurityTab({ security }) {
                 <div className="flex justify-end">
                     <button
                         type="submit"
-                        disabled={processing}
+                        disabled={passwordForm.processing}
                         className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-60"
                     >
-                        {processing ? 'Сохранение…' : 'Сменить пароль'}
+                        {passwordForm.processing ? 'Сохранение…' : 'Сменить пароль'}
                     </button>
                 </div>
             </form>
 
-            <div className="rounded-xl border border-slate-800 bg-[#1a2740] p-4">
+            <div className="rounded-xl border border-slate-800 bg-[#1a2740] p-4 space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                         <h3 className="text-sm font-semibold text-white">
                             Двухфакторная аутентификация
                         </h3>
                         <p className="mt-1 text-sm text-slate-400">
-                            Статус:{' '}
+                            Google Authenticator / Authy / 1Password. Статус:{' '}
                             <span className="font-medium text-white">
                                 {security.two_factor_enabled ? 'Включена' : 'Выключена'}
                             </span>
                         </p>
                     </div>
-                    <button
-                        type="button"
-                        disabled
-                        className="cursor-not-allowed rounded-lg border border-slate-700 bg-[#152033] px-4 py-2 text-sm font-medium text-slate-400"
-                    >
-                        Включить
-                    </button>
+                    {!security.two_factor_enabled && !setup ? (
+                        <button
+                            type="button"
+                            onClick={startTwoFactor}
+                            className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
+                        >
+                            Включить
+                        </button>
+                    ) : null}
+                    {security.two_factor_enabled ? (
+                        <button
+                            type="button"
+                            onClick={() => setShowDisable((value) => !value)}
+                            className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-800"
+                        >
+                            Отключить
+                        </button>
+                    ) : null}
                 </div>
+
+                {setup ? (
+                    <div className="space-y-4 rounded-lg border border-indigo-500/30 bg-indigo-500/5 p-4">
+                        <p className="text-sm text-slate-300">
+                            Отсканируйте QR в приложении-аутентификаторе или введите ключ
+                            вручную, затем подтвердите 6-значным кодом.
+                        </p>
+                        <div
+                            className="mx-auto w-fit overflow-hidden rounded-xl bg-white p-3"
+                            dangerouslySetInnerHTML={{ __html: setup.qr_svg }}
+                        />
+                        <p className="text-center font-mono text-xs text-slate-300 break-all">
+                            {setup.secret}
+                        </p>
+                        <form onSubmit={confirmTwoFactor} className="flex flex-col gap-3 sm:flex-row">
+                            <input
+                                type="text"
+                                inputMode="numeric"
+                                autoComplete="one-time-code"
+                                placeholder="Код из приложения"
+                                value={confirmForm.data.code}
+                                onChange={(e) => confirmForm.setData('code', e.target.value)}
+                                className={inputClass(
+                                    confirmForm.errors.code || pageErrors.code,
+                                )}
+                                required
+                            />
+                            <button
+                                type="submit"
+                                disabled={confirmForm.processing}
+                                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
+                            >
+                                Подтвердить
+                            </button>
+                        </form>
+                        <FieldError
+                            message={confirmForm.errors.code || pageErrors.code}
+                        />
+                    </div>
+                ) : null}
+
+                {Array.isArray(recoveryCodes) && recoveryCodes.length > 0 ? (
+                    <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4">
+                        <p className="text-sm font-medium text-amber-200">
+                            Сохраните recovery-коды в надёжном месте — каждый работает один раз.
+                        </p>
+                        <ul className="mt-3 grid gap-1 font-mono text-xs text-slate-200 sm:grid-cols-2">
+                            {recoveryCodes.map((code) => (
+                                <li key={code}>{code}</li>
+                            ))}
+                        </ul>
+                    </div>
+                ) : null}
+
+                {showDisable ? (
+                    <form onSubmit={disableTwoFactor} className="space-y-3 border-t border-slate-800 pt-4">
+                        <p className="text-sm text-slate-400">
+                            Для отключения нужны текущий пароль и код 2FA (или recovery-код).
+                        </p>
+                        <input
+                            type="password"
+                            placeholder="Текущий пароль"
+                            value={disableForm.data.password}
+                            onChange={(e) =>
+                                disableForm.setData('password', e.target.value)
+                            }
+                            className={inputClass(disableForm.errors.password)}
+                            required
+                        />
+                        <FieldError message={disableForm.errors.password} />
+                        <input
+                            type="text"
+                            placeholder="Код 2FA"
+                            value={disableForm.data.code}
+                            onChange={(e) => disableForm.setData('code', e.target.value)}
+                            className={inputClass(disableForm.errors.code)}
+                            required
+                        />
+                        <FieldError message={disableForm.errors.code} />
+                        <button
+                            type="submit"
+                            disabled={disableForm.processing}
+                            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-60"
+                        >
+                            Подтвердить отключение
+                        </button>
+                    </form>
+                ) : null}
             </div>
         </div>
     );
 }
 
-function IntegrationsTab({ integrations }) {
-    const { data, setData, post, processing, errors } = useForm({
-        firebase_project_id: integrations.firebase?.project_id || '',
-        firebase_database_url: integrations.firebase?.database_url || '',
-        firebase_credentials: null,
-        engine_base_url: integrations.engine?.base_url || '',
-        engine_secret_key: '',
-        _method: 'patch',
-    });
-
-    const submit = (e) => {
-        e.preventDefault();
-        post(route('settings.integrations.update'), {
-            forceFormData: true,
-            preserveScroll: true,
-            onSuccess: () => {
-                setData('engine_secret_key', '');
-                setData('firebase_credentials', null);
-            },
-            onError: () => fireError('Не удалось сохранить интеграции.'),
-        });
-    };
-
-    return (
-        <form onSubmit={submit} className="space-y-8" noValidate>
-            <section className="space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h3 className="text-sm font-semibold text-white">Firebase</h3>
-                    <StatusBadge status={integrations.status?.firebase} />
-                </div>
-
-                <div className="grid gap-5 sm:grid-cols-2">
-                    <div>
-                        <label
-                            htmlFor="firebase_project_id"
-                            className="block text-sm font-medium text-slate-200"
-                        >
-                            Project ID
-                        </label>
-                        <input
-                            id="firebase_project_id"
-                            type="text"
-                            value={data.firebase_project_id}
-                            onChange={(e) =>
-                                setData('firebase_project_id', e.target.value)
-                            }
-                            className={inputClass(errors.firebase_project_id)}
-                        />
-                        <FieldError message={errors.firebase_project_id} />
-                    </div>
-                    <div>
-                        <label
-                            htmlFor="firebase_database_url"
-                            className="block text-sm font-medium text-slate-200"
-                        >
-                            Database URL
-                        </label>
-                        <input
-                            id="firebase_database_url"
-                            type="text"
-                            value={data.firebase_database_url}
-                            onChange={(e) =>
-                                setData('firebase_database_url', e.target.value)
-                            }
-                            className={inputClass(errors.firebase_database_url)}
-                            placeholder="https://...."
-                        />
-                        <FieldError message={errors.firebase_database_url} />
-                    </div>
-                    <div className="sm:col-span-2">
-                        <label
-                            htmlFor="firebase_credentials"
-                            className="block text-sm font-medium text-slate-200"
-                        >
-                            Credentials file
-                        </label>
-                        <input
-                            id="firebase_credentials"
-                            type="file"
-                            accept=".json,application/json"
-                            onChange={(e) =>
-                                setData(
-                                    'firebase_credentials',
-                                    e.target.files?.[0] || null,
-                                )
-                            }
-                            className="mt-1 block w-full text-sm text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-500/15 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-indigo-300 hover:file:bg-indigo-500/20"
-                        />
-                        {integrations.firebase?.credentials_uploaded && (
-                            <p className="mt-1.5 text-xs text-slate-400">
-                                Загружен файл:{' '}
-                                {integrations.firebase.credentials_name ||
-                                    'firebase-credentials.json'}
-                            </p>
-                        )}
-                        <FieldError message={errors.firebase_credentials} />
-                    </div>
-                </div>
-            </section>
-
-            <section className="space-y-4 border-t border-gray-100 pt-6">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h3 className="text-sm font-semibold text-white">C++ Движок</h3>
-                    <StatusBadge status={integrations.status?.engine} />
-                </div>
-
-                <div className="grid gap-5 sm:grid-cols-2">
-                    <div>
-                        <label
-                            htmlFor="engine_base_url"
-                            className="block text-sm font-medium text-slate-200"
-                        >
-                            Base URL
-                        </label>
-                        <input
-                            id="engine_base_url"
-                            type="text"
-                            value={data.engine_base_url}
-                            onChange={(e) => setData('engine_base_url', e.target.value)}
-                            className={inputClass(errors.engine_base_url)}
-                            placeholder="https://...."
-                        />
-                        <FieldError message={errors.engine_base_url} />
-                    </div>
-                    <div>
-                        <label
-                            htmlFor="engine_secret_key"
-                            className="block text-sm font-medium text-slate-200"
-                        >
-                            Secret key
-                        </label>
-                        <input
-                            id="engine_secret_key"
-                            type="password"
-                            value={data.engine_secret_key}
-                            onChange={(e) =>
-                                setData('engine_secret_key', e.target.value)
-                            }
-                            className={inputClass(errors.engine_secret_key)}
-                            placeholder={
-                                integrations.engine?.secret_key_set
-                                    ? '•••••••• (оставьте пустым, чтобы не менять)'
-                                    : 'Секретный ключ'
-                            }
-                            autoComplete="new-password"
-                        />
-                        <FieldError message={errors.engine_secret_key} />
-                    </div>
-                </div>
-            </section>
-
-            <div className="flex justify-end">
-                <button
-                    type="submit"
-                    disabled={processing}
-                    className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-60"
-                >
-                    {processing ? 'Сохранение…' : 'Сохранить'}
-                </button>
-            </div>
-        </form>
-    );
-}
-
 export default function Index({
     profile,
-    tenant = null,
-    integrations,
     security,
     timezones = [],
     locales = [],
@@ -515,63 +467,41 @@ export default function Index({
         >
             <Head title="Настройки" />
 
-            <div className="space-y-6">
-                {tenant && (
-                    <div className="rounded-xl bg-[#152033] p-4 shadow-sm ring-1 ring-slate-800">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                            Tenant
-                        </p>
-                        <p className="mt-1 text-sm font-medium text-white">
-                            {tenant.name}
-                            <span className="ml-2 font-mono text-xs text-slate-400">
-                                {tenant.domain}
-                            </span>
-                        </p>
-                        <p className="mt-1 text-xs text-slate-400">
-                            Статус: {tenant.is_active ? 'активен' : 'неактивен'}
-                        </p>
-                    </div>
-                )}
+            <div className="overflow-hidden rounded-xl bg-[#152033] shadow-sm ring-1 ring-slate-800">
+                <div className="border-b border-slate-800">
+                    <nav className="flex gap-1 overflow-x-auto px-2 py-2 sm:px-4">
+                        {visibleTabs.map((item) => {
+                            const active = tab === item.id;
 
-                <div className="overflow-hidden rounded-xl bg-[#152033] shadow-sm ring-1 ring-slate-800">
-                    <div className="border-b border-slate-800">
-                        <nav className="flex gap-1 overflow-x-auto px-2 py-2 sm:px-4">
-                            {visibleTabs.map((item) => {
-                                const active = tab === item.id;
+                            return (
+                                <button
+                                    key={item.id}
+                                    type="button"
+                                    onClick={() => switchTab(item.id)}
+                                    className={clsx(
+                                        'inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition',
+                                        active
+                                            ? 'bg-indigo-500/15 text-indigo-300'
+                                            : 'text-slate-300 hover:bg-slate-800 hover:text-white',
+                                    )}
+                                >
+                                    <item.icon className="h-4 w-4" />
+                                    {item.label}
+                                </button>
+                            );
+                        })}
+                    </nav>
+                </div>
 
-                                return (
-                                    <button
-                                        key={item.id}
-                                        type="button"
-                                        onClick={() => switchTab(item.id)}
-                                        className={clsx(
-                                            'inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition',
-                                            active
-                                                ? 'bg-indigo-500/15 text-indigo-300'
-                                                : 'text-slate-300 hover:bg-slate-800 hover:text-white',
-                                        )}
-                                    >
-                                        <item.icon className="h-4 w-4" />
-                                        {item.label}
-                                    </button>
-                                );
-                            })}
-                        </nav>
-                    </div>
-
-                    <div className="p-4 sm:p-6">
-                        {tab === 'profile' && (
-                            <ProfileTab
-                                profile={profile}
-                                timezones={timezones}
-                                locales={locales}
-                            />
-                        )}
-                        {tab === 'security' && <SecurityTab security={security} />}
-                        {tab === 'integrations' && (
-                            <IntegrationsTab integrations={integrations} />
-                        )}
-                    </div>
+                <div className="p-4 sm:p-6">
+                    {tab === 'profile' && (
+                        <ProfileTab
+                            profile={profile}
+                            timezones={timezones}
+                            locales={locales}
+                        />
+                    )}
+                    {tab === 'security' && <SecurityTab security={security} />}
                 </div>
             </div>
         </AdminLayout>

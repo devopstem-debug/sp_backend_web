@@ -7,8 +7,12 @@ use App\Models\User;
 use App\Services\ChatService;
 use Illuminate\Support\Facades\Broadcast;
 
+Broadcast::channel('user.{id}', function (User $user, string $id): bool {
+    return (string) $user->id === (string) $id;
+});
+
 Broadcast::channel('App.Models.User.{id}', function (User $user, string $id): bool {
-    return $user->id === $id;
+    return (string) $user->id === (string) $id;
 });
 
 Broadcast::channel('tenant.{tenantId}.chat', function (User $user, string $tenantId): bool {

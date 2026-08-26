@@ -119,6 +119,8 @@ Route::middleware(['auth', 'user.active', 'tenant.active', 'subscription.active'
 
     Route::get('database/sql', [DatabaseController::class, 'sql'])->name('database.sql');
     Route::post('database/sql', [DatabaseController::class, 'executeSql'])->name('database.sql.execute');
+    Route::get('database/export-sql', [DatabaseController::class, 'exportSql'])
+        ->name('database.export-sql');
     Route::get('database', [DatabaseController::class, 'index'])->name('database.index');
     Route::get('database/{table}', [DatabaseController::class, 'show'])->name('database.show');
 
@@ -185,8 +187,12 @@ Route::middleware(['auth', 'user.active', 'tenant.active', 'subscription.active'
         ->name('settings.profile.update');
     Route::patch('settings/password', [SettingsController::class, 'updatePassword'])
         ->name('settings.password.update');
-    Route::patch('settings/integrations', [SettingsController::class, 'updateIntegrations'])
-        ->name('settings.integrations.update');
+    Route::post('settings/two-factor/enable', [SettingsController::class, 'enableTwoFactor'])
+        ->name('settings.two-factor.enable');
+    Route::post('settings/two-factor/confirm', [SettingsController::class, 'confirmTwoFactor'])
+        ->name('settings.two-factor.confirm');
+    Route::post('settings/two-factor/disable', [SettingsController::class, 'disableTwoFactor'])
+        ->name('settings.two-factor.disable');
 
     Route::get('planograms', [PlanogramController::class, 'index'])->name('planograms.index');
     Route::get('planograms/{shelf}', [PlanogramController::class, 'show'])->name('planograms.show');
@@ -202,12 +208,13 @@ Route::middleware(['auth', 'user.active', 'tenant.active', 'subscription.active'
     Route::delete('floor-plan/walls/{wall}', [FloorPlanController::class, 'removeWall'])->name('floor-plan.walls.destroy');
 
     Route::get('export', [ExportController::class, 'index'])->name('export.index');
+    // catalog до {storeId}, иначе "catalog" матчится как storeId
+    Route::post('export/catalog/firebase', [ExportController::class, 'syncCatalogToFirebase'])
+        ->name('export.catalog.firebase');
     Route::get('export/{storeId}/download', [ExportController::class, 'download'])
         ->name('export.download');
     Route::post('export/{storeId}/firebase', [ExportController::class, 'sendToFirebase'])
         ->name('export.firebase');
-    Route::post('export/catalog/firebase', [ExportController::class, 'syncCatalogToFirebase'])
-        ->name('export.catalog.firebase');
 
     Route::get('import', [ImportController::class, 'index'])->name('import.index');
     Route::post('import/upload', [ImportController::class, 'upload'])->name('import.upload');

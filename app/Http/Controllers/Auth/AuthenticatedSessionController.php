@@ -7,6 +7,7 @@ namespace App\Http\Controllers\Auth;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\LoginRequest;
 use App\Services\AuthActivityService;
+use App\Services\TwoFactorService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -38,9 +39,20 @@ class AuthenticatedSessionController extends Controller
     {
         $request->authenticate();
 
-        $request->session()->regenerate();
-
         $user = Auth::user();
+
+        if ($user && app(TwoFactorService::class)->isEnabled($user)) {
+            $remember = $request->boolean('remember');
+            Auth::logout();
+
+            $request->session()->put('login.id', $user->id);
+            $request->session()->put('login.remember', $remember);
+            $request->session()->regenerate();
+
+            return redirect()->route('two-factor.login');
+        }
+
+        $request->session()->regenerate();
 
         if ($user) {
             $user->forceFill([

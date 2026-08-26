@@ -5,21 +5,26 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Http\Requests\ExecuteSqlRequest;
+use App\Services\DatabaseDumpService;
 use App\Services\DatabaseViewerService;
 use App\Support\Permissions;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
+use Illuminate\Support\Facades\Auth;
 use Inertia\Inertia;
 use Inertia\Response;
 use InvalidArgumentException;
 use RuntimeException;
+use Symfony\Component\HttpFoundation\StreamedResponse;
+use Throwable;
 
 class DatabaseController extends Controller implements HasMiddleware
 {
     public function __construct(
         private readonly DatabaseViewerService $databaseViewer,
+        private readonly DatabaseDumpService $databaseDump,
     ) {}
 
     /**
@@ -34,9 +39,38 @@ class DatabaseController extends Controller implements HasMiddleware
 
     public function index(): Response
     {
+        $user = Auth::user();
+
         return Inertia::render('Database/Index', [
             'tables' => $this->databaseViewer->tablesWithCounts(),
+            'canExportSql' => $user?->isSuperAdmin() === true,
+            'driver' => (string) config('database.default'),
         ]);
+    }
+
+    public function exportSql(): StreamedResponse|RedirectResponse
+    {
+        $user = Auth::user();
+
+        abort_unless($user?->isSuperAdmin() === true, 403, 'Экспорт SQL доступен только Super Admin.');
+
+        try {
+            activity()
+                ->causedBy($user)
+                ->withProperties([
+                    'driver' => config('database.default'),
+                    'action' => 'database_sql_export',
+                ])
+                ->log('Экспорт всей БД в SQL');
+
+            return $this->databaseDump->downloadSqlDump();
+        } catch (Throwable $exception) {
+            report($exception);
+
+            return redirect()
+                ->route('database.index')
+                ->with('error', $exception->getMessage());
+        }
     }
 
     public function show(Request $request, string $table): Response

@@ -74,14 +74,11 @@ export default function Bell() {
     }, []);
 
     useEffect(() => {
-        if (!tenantId || !window.Echo) {
+        if (!window.Echo || !userId) {
             return undefined;
         }
 
-        const channelName = `tenant.${tenantId}`;
-        const channel = window.Echo.channel(channelName);
-
-        channel.listen('.notification.created', (payload) => {
+        const handlePayload = (payload) => {
             if (payload.user_id && payload.user_id !== userId) {
                 return;
             }
@@ -114,10 +111,22 @@ export default function Bell() {
 
             fireToast(toastIcon(incoming.type), incoming.title || incoming.message);
             showBrowserPush(incoming);
-        });
+        };
+
+        const privateChannel = window.Echo.private(`user.${userId}`);
+        privateChannel.listen('.notification.created', handlePayload);
+
+        let tenantChannel = null;
+        if (tenantId) {
+            tenantChannel = window.Echo.channel(`tenant.${tenantId}`);
+            tenantChannel.listen('.notification.created', handlePayload);
+        }
 
         return () => {
-            window.Echo.leave(channelName);
+            window.Echo.leave(`user.${userId}`);
+            if (tenantId) {
+                window.Echo.leave(`tenant.${tenantId}`);
+            }
         };
     }, [tenantId, userId]);
 

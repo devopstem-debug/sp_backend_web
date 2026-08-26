@@ -2,6 +2,7 @@ import ApplicationLogo from '@/Components/ApplicationLogo';
 import ChatWidget from '@/Components/Chat/ChatWidget';
 import Dropdown from '@/Components/Dropdown';
 import Bell from '@/Components/Notifications/Bell';
+import PushPermissionBanner from '@/Components/Notifications/PushPermissionBanner';
 import { useCan } from '@/lib/permissions';
 import { Link, usePage } from '@inertiajs/react';
 import {
@@ -201,7 +202,7 @@ const navigation = [
         name: 'Настройки',
         href: '/settings',
         icon: Cog6ToothIcon,
-        permission: ['edit-profile', 'edit-security', 'edit-integrations'],
+        permission: ['edit-profile', 'edit-security'],
         section: 'system',
     },
 ];
@@ -318,11 +319,7 @@ export default function AdminLayout({ header, children, flush = false }) {
     const user = usePage().props.auth?.user;
     const canChat = Boolean(usePage().props.can_chat);
     const can = useCan();
-    const canSettings = can(
-        'edit-profile',
-        'edit-security',
-        'edit-integrations',
-    );
+    const canSettings = can('edit-profile', 'edit-security');
     const items = navigation.filter((item) =>
         isVisible(item, can, canChat, user),
     );
@@ -453,6 +450,14 @@ export default function AdminLayout({ header, children, flush = false }) {
                             </div>
                         }
                     />
+                    <div className="shrink-0 border-t border-white/5 px-4 py-3">
+                        <p className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
+                            V 2.4 · MIT
+                        </p>
+                        <p className="mt-0.5 truncate text-xs text-slate-400">
+                            © DevOpsTem
+                        </p>
+                    </div>
                 </div>
             </aside>
 
@@ -462,6 +467,7 @@ export default function AdminLayout({ header, children, flush = false }) {
                     desktopCollapsed ? 'lg:pl-0' : 'lg:pl-64',
                 )}
             >
+                <PushPermissionBanner />
                 <header className="sticky top-0 z-20 border-b border-slate-800 bg-[#0e172b]/90 backdrop-blur">
                     <div className="flex h-16 items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
                         <div className="flex min-w-0 flex-1 items-center gap-3">

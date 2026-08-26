@@ -1,6 +1,9 @@
 {
     "private": true,
+    "version": "2.4.0",
     "type": "module",
+    "author": "DevOpsTem <devopstem@gmail.com>",
+    "license": "MIT",
     "scripts": {
         "dev": "vite",
         "build": "vite build",
