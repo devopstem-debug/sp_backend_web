@@ -73,4 +73,9 @@ class StandShelfLevel extends Model
     {
         return $this->belongsTo(Stand::class);
     }
+
+    public function placements(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(Placement::class)->orderBy('start_cm');
+    }
 }

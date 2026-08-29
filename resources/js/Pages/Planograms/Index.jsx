@@ -289,7 +289,7 @@ export default function Index({
     activeShelf = null,
     filters = {},
 }) {
-    const shelf = activeEquipment?.type === 'shelf' ? activeEquipment : activeShelf;
+    const shelf = activeEquipment || activeShelf;
     const { flash } = usePage().props;
     const can = useCan();
     const canEdit = can('create-planograms', 'edit-planograms');
@@ -309,6 +309,8 @@ export default function Index({
                 code: d.code,
                 color: d.color,
                 shelves: d.shelves || [],
+                coolers: d.coolers || [],
+                stands: d.stands || [],
             })),
         [tree],
     );
@@ -317,16 +319,44 @@ export default function Index({
         if (shelf?.department_id) {
             return shelf.department_id;
         }
-        const fromShelf = departments.find((d) =>
-            d.shelves.some((s) => s.id === filters.shelf_id),
+        const fromEquip = departments.find(
+            (d) =>
+                d.shelves.some((s) => s.id === filters.shelf_id) ||
+                d.coolers.some((s) => s.id === filters.cooler_id) ||
+                d.stands.some((s) => s.id === filters.stand_id),
         );
-        return fromShelf?.id || departments[0]?.id || '';
-    }, [shelf, departments, filters.shelf_id]);
+        return fromEquip?.id || departments[0]?.id || '';
+    }, [shelf, departments, filters.shelf_id, filters.cooler_id, filters.stand_id]);
 
-    const shelvesInDept = useMemo(() => {
+    const equipmentInDept = useMemo(() => {
         const dept = departments.find((d) => d.id === selectedDepartmentId);
-        return dept?.shelves || [];
+        if (!dept) return [];
+        return [
+            ...(dept.shelves || []).map((item) => ({
+                ...item,
+                type: 'shelf',
+                label: `Стеллаж · ${item.code}`,
+            })),
+            ...(dept.coolers || []).map((item) => ({
+                ...item,
+                type: 'cooler',
+                label: `Холодильник · ${item.code}`,
+            })),
+            ...(dept.stands || []).map((item) => ({
+                ...item,
+                type: 'stand',
+                label: `Стойка · ${item.code}`,
+            })),
+        ];
     }, [departments, selectedDepartmentId]);
+
+    const selectedEquipmentKey = useMemo(() => {
+        if (filters.shelf_id) return `shelf:${filters.shelf_id}`;
+        if (filters.cooler_id) return `cooler:${filters.cooler_id}`;
+        if (filters.stand_id) return `stand:${filters.stand_id}`;
+        if (shelf?.id && shelf?.type) return `${shelf.type}:${shelf.id}`;
+        return '';
+    }, [filters, shelf]);
 
     const navigate = (params) => {
         router.get(route('planograms.index'), params, {
@@ -346,17 +376,25 @@ export default function Index({
         }
     }, [flash]);
 
-    // Автовыбор первого стеллажа в отделе, если ещё не выбран.
+    // Автовыбор первого оборудования в отделе, если ещё не выбрано.
     useEffect(() => {
-        if (!storeId || filters.shelf_id || shelvesInDept.length === 0) {
+        if (
+            !storeId ||
+            filters.shelf_id ||
+            filters.cooler_id ||
+            filters.stand_id ||
+            equipmentInDept.length === 0
+        ) {
             return;
         }
-        navigate({
-            store_id: storeId,
-            shelf_id: shelvesInDept[0].id,
-        });
+        const first = equipmentInDept[0];
+        const params = { store_id: storeId };
+        if (first.type === 'shelf') params.shelf_id = first.id;
+        if (first.type === 'cooler') params.cooler_id = first.id;
+        if (first.type === 'stand') params.stand_id = first.id;
+        navigate(params);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [storeId, filters.shelf_id, shelvesInDept]);
+    }, [storeId, filters.shelf_id, filters.cooler_id, filters.stand_id, equipmentInDept]);
 
     const handleStoreChange = (nextStoreId) => {
         navigate({ store_id: nextStoreId || undefined });
@@ -364,18 +402,24 @@ export default function Index({
 
     const handleDepartmentChange = (deptId) => {
         const dept = departments.find((d) => d.id === deptId);
-        const firstShelf = dept?.shelves?.[0];
-        navigate({
-            store_id: storeId || undefined,
-            shelf_id: firstShelf?.id,
-        });
+        const params = { store_id: storeId || undefined };
+        if (dept?.shelves?.[0]) {
+            params.shelf_id = dept.shelves[0].id;
+        } else if (dept?.coolers?.[0]) {
+            params.cooler_id = dept.coolers[0].id;
+        } else if (dept?.stands?.[0]) {
+            params.stand_id = dept.stands[0].id;
+        }
+        navigate(params);
     };
 
-    const handleShelfChange = (shelfId) => {
-        navigate({
-            store_id: storeId || undefined,
-            shelf_id: shelfId || undefined,
-        });
+    const handleEquipmentChange = (value) => {
+        const [type, id] = String(value).split(':');
+        const params = { store_id: storeId || undefined };
+        if (type === 'shelf') params.shelf_id = id;
+        if (type === 'cooler') params.cooler_id = id;
+        if (type === 'stand') params.stand_id = id;
+        navigate(params);
     };
 
     const openAdd = (levelId = null) => {
@@ -507,21 +551,26 @@ export default function Index({
                         </select>
                     </label>
 
-                    <label className="min-w-[200px] flex-[1.2] text-xs text-slate-400">
-                        Стеллаж
+                    <label className="min-w-[220px] flex-[1.2] text-xs text-slate-400">
+                        Оборудование
                         <select
                             className={clsx(selectClass, 'mt-1 w-full')}
-                            value={filters.shelf_id || shelf?.id || ''}
-                            onChange={(e) => handleShelfChange(e.target.value)}
-                            disabled={shelvesInDept.length === 0}
+                            value={selectedEquipmentKey}
+                            onChange={(e) => handleEquipmentChange(e.target.value)}
+                            disabled={equipmentInDept.length === 0}
                         >
-                            {shelvesInDept.length === 0 ? (
-                                <option value="">Нет стеллажей</option>
+                            {equipmentInDept.length === 0 ? (
+                                <option value="">Нет оборудования</option>
                             ) : null}
-                            {shelvesInDept.map((item) => (
-                                <option key={item.id} value={item.id}>
-                                    {item.code} — {item.name} ·{' '}
-                                    {formatWidthLabel(item.width_cm, item.width_m)}
+                            {equipmentInDept.map((item) => (
+                                <option
+                                    key={`${item.type}:${item.id}`}
+                                    value={`${item.type}:${item.id}`}
+                                >
+                                    {item.label}
+                                    {item.width_cm
+                                        ? ` · ${formatWidthLabel(item.width_cm, item.width_m)}`
+                                        : ''}
                                 </option>
                             ))}
                         </select>

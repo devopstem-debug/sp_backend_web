@@ -23,9 +23,15 @@ class PlacementObserver
 
     private function resolveStoreId(Placement $placement): ?string
     {
-        $placement->loadMissing('shelfLevel.shelf:id,store_id');
+        $placement->loadMissing([
+            'shelfLevel.shelf:id,store_id',
+            'coolerShelfLevel.cooler:id,store_id',
+            'standShelfLevel.stand:id,store_id',
+        ]);
 
-        $storeId = $placement->shelfLevel?->shelf?->store_id;
+        $storeId = $placement->shelfLevel?->shelf?->store_id
+            ?? $placement->coolerShelfLevel?->cooler?->store_id
+            ?? $placement->standShelfLevel?->stand?->store_id;
 
         return $storeId ? (string) $storeId : null;
     }

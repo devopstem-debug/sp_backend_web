@@ -208,8 +208,10 @@ Route::middleware(['auth', 'user.active', 'tenant.active', 'subscription.active'
 
     Route::get('planograms', [PlanogramController::class, 'index'])->name('planograms.index');
     Route::get('planograms/{shelf}', [PlanogramController::class, 'show'])->name('planograms.show');
-    Route::post('planograms/{shelf}/placements', [PlanogramController::class, 'storePlacement'])
+    Route::post('planograms/placements', [PlanogramController::class, 'storePlacement'])
         ->name('planograms.placements.store');
+    Route::post('planograms/{shelf}/placements', [PlanogramController::class, 'storePlacement'])
+        ->name('planograms.placements.store.shelf');
     Route::delete('planograms/placements/{id}', [PlanogramController::class, 'destroyPlacement'])
         ->name('planograms.placements.destroy');
 

@@ -31,12 +31,26 @@ function freeCm(shelf, levelId) {
     return Math.max(0, Math.round((Number(shelf.width_cm) - used) * 100) / 100);
 }
 
-export default function AddPlacementModal({ shelf, initialLevelId = null, onClose, onAdded }) {
+export default function AddPlacementModal({
+    shelf,
+    initialLevelId = null,
+    onClose,
+    onAdded,
+}) {
     const [selectedProduct, setSelectedProduct] = useState(null);
+    const equipmentType =
+        shelf?.type === 'cooler'
+            ? 'cooler'
+            : shelf?.type === 'stand'
+              ? 'stand'
+              : 'shelf';
 
     const { data, setData, post, processing, errors, reset, clearErrors } =
         useForm({
+            equipment_type: equipmentType,
+            equipment_id: shelf?.id || '',
             product_id: '',
+            level_id: initialLevelId || shelf.levels[0]?.id || '',
             shelf_level_id: initialLevelId || shelf.levels[0]?.id || '',
             facings: 1,
         });
@@ -44,7 +58,7 @@ export default function AddPlacementModal({ shelf, initialLevelId = null, onClos
     const space = useMemo(() => {
         const widthMm = selectedProduct?.width_mm ?? 0;
         const needed = occupiedCm(widthMm, data.facings);
-        const free = freeCm(shelf, data.shelf_level_id);
+        const free = freeCm(shelf, data.level_id || data.shelf_level_id);
 
         return {
             widthMm,
@@ -53,7 +67,7 @@ export default function AddPlacementModal({ shelf, initialLevelId = null, onClos
             overflows: selectedProduct && widthMm > 0 ? needed > free : false,
             missingWidth: selectedProduct && !(Number(widthMm) > 0),
         };
-    }, [selectedProduct, data.facings, data.shelf_level_id, shelf]);
+    }, [selectedProduct, data.facings, data.level_id, data.shelf_level_id, shelf]);
 
     const selectProduct = (product) => {
         setSelectedProduct(product);
@@ -69,7 +83,7 @@ export default function AddPlacementModal({ shelf, initialLevelId = null, onClos
             return;
         }
 
-        if (!data.shelf_level_id) {
+        if (!data.level_id && !data.shelf_level_id) {
             fireError('Выберите полку.');
             return;
         }
@@ -88,7 +102,7 @@ export default function AddPlacementModal({ shelf, initialLevelId = null, onClos
             return;
         }
 
-        post(route('planograms.placements.store', shelf.id), {
+        post(route('planograms.placements.store'), {
             preserveScroll: true,
             onSuccess: () => {
                 fireSuccess('Товар размещён');
@@ -101,12 +115,20 @@ export default function AddPlacementModal({ shelf, initialLevelId = null, onClos
                 fireError(
                     formErrors.facings ||
                         formErrors.product_id ||
+                        formErrors.level_id ||
                         formErrors.shelf_level_id ||
                         'Не удалось добавить товар.',
                 );
             },
         });
     };
+
+    const equipmentLabel =
+        equipmentType === 'cooler'
+            ? 'Холодильник'
+            : equipmentType === 'stand'
+              ? 'Стойка'
+              : 'Стеллаж';
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 p-4">
@@ -133,9 +155,12 @@ export default function AddPlacementModal({ shelf, initialLevelId = null, onClos
 
                     <ShelfLevelPicker
                         levels={shelf.levels}
-                        value={data.shelf_level_id}
-                        onChange={(id) => setData('shelf_level_id', id)}
-                        error={errors.shelf_level_id}
+                        value={data.level_id || data.shelf_level_id}
+                        onChange={(id) => {
+                            setData('level_id', id);
+                            setData('shelf_level_id', id);
+                        }}
+                        error={errors.level_id || errors.shelf_level_id}
                     />
 
                     <FacingsStepper
@@ -146,7 +171,7 @@ export default function AddPlacementModal({ shelf, initialLevelId = null, onClos
 
                     <div className="rounded-xl border border-slate-800 bg-[#0e172b] px-3 py-2.5 text-sm text-slate-200">
                         <p>
-                            Стеллаж:{' '}
+                            {equipmentLabel}:{' '}
                             <span className="font-semibold">
                                 {shelf.width_m
                                     ? `${shelf.width_m} м`

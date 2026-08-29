@@ -20,6 +20,8 @@ class Placement extends Model
 
     protected $fillable = [
         'shelf_level_id',
+        'cooler_shelf_level_id',
+        'stand_shelf_level_id',
         'product_id',
         'start_cm',
         'end_cm',
@@ -54,16 +56,28 @@ class Placement extends Model
                 return;
             }
 
-            $builder->whereHas('shelfLevel.shelf.store', function (Builder $query) use ($user): void {
-                $query->where('tenant_id', $user->tenant_id);
+            $builder->where(function (Builder $query) use ($user): void {
+                $query->whereHas('shelfLevel.shelf.store', function (Builder $storeQuery) use ($user): void {
+                    $storeQuery->where('tenant_id', $user->tenant_id);
+                })->orWhereHas('coolerShelfLevel.cooler.store', function (Builder $storeQuery) use ($user): void {
+                    $storeQuery->where('tenant_id', $user->tenant_id);
+                })->orWhereHas('standShelfLevel.stand.store', function (Builder $storeQuery) use ($user): void {
+                    $storeQuery->where('tenant_id', $user->tenant_id);
+                });
             });
 
             static::applyOwnDepartmentScope(
                 $builder,
                 $user,
                 function (Builder $query, string $departmentId): void {
-                    $query->whereHas('shelfLevel.shelf', function (Builder $shelfQuery) use ($departmentId): void {
-                        $shelfQuery->where('department_id', $departmentId);
+                    $query->where(function (Builder $inner) use ($departmentId): void {
+                        $inner->whereHas('shelfLevel.shelf', function (Builder $shelfQuery) use ($departmentId): void {
+                            $shelfQuery->where('department_id', $departmentId);
+                        })->orWhereHas('coolerShelfLevel.cooler', function (Builder $coolerQuery) use ($departmentId): void {
+                            $coolerQuery->where('department_id', $departmentId);
+                        })->orWhereHas('standShelfLevel.stand', function (Builder $standQuery) use ($departmentId): void {
+                            $standQuery->where('department_id', $departmentId);
+                        });
                     });
                 },
             );
@@ -75,9 +89,34 @@ class Placement extends Model
         return $this->belongsTo(ShelfLevel::class);
     }
 
+    public function coolerShelfLevel(): BelongsTo
+    {
+        return $this->belongsTo(CoolerShelfLevel::class);
+    }
+
+    public function standShelfLevel(): BelongsTo
+    {
+        return $this->belongsTo(StandShelfLevel::class);
+    }
+
     public function product(): BelongsTo
     {
         return $this->belongsTo(Product::class);
+    }
+
+    public function equipmentType(): ?string
+    {
+        if ($this->shelf_level_id) {
+            return 'shelf';
+        }
+        if ($this->cooler_shelf_level_id) {
+            return 'cooler';
+        }
+        if ($this->stand_shelf_level_id) {
+            return 'stand';
+        }
+
+        return null;
     }
 
     public function getActivitylogOptions(): LogOptions

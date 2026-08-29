@@ -63,7 +63,11 @@ class PlanogramController extends Controller implements HasMiddleware
             }
         } elseif ($coolerId !== '') {
             $model = Cooler::query()
-                ->with(['store:id,name,city', 'department:id,name,code', 'levels'])
+                ->with([
+                    'store:id,name,city',
+                    'department:id,name,code,color',
+                    'levels.placements.product:id,barcode,name,category,volume_ml,package_type,width_mm,height_mm,depth_mm',
+                ])
                 ->find($coolerId);
 
             if ($model) {
@@ -72,7 +76,11 @@ class PlanogramController extends Controller implements HasMiddleware
             }
         } elseif ($standId !== '') {
             $model = Stand::query()
-                ->with(['store:id,name,city', 'department:id,name,code', 'levels'])
+                ->with([
+                    'store:id,name,city',
+                    'department:id,name,code,color',
+                    'levels.placements.product:id,barcode,name,category,volume_ml,package_type,width_mm,height_mm,depth_mm',
+                ])
                 ->find($standId);
 
             if ($model) {
@@ -110,38 +118,72 @@ class PlanogramController extends Controller implements HasMiddleware
 
     public function storePlacement(
         StorePlacementRequest $request,
-        string $shelf,
         PlacementService $placements,
+        ?string $shelf = null,
     ): RedirectResponse {
-        $model = Shelf::query()->findOrFail($shelf);
+        $type = (string) $request->validated('equipment_type');
+        $equipmentId = (string) $request->validated('equipment_id');
+        $levelId = (string) ($request->validated('level_id') ?? $request->validated('shelf_level_id'));
 
-        $placements->create($model, $request->validated());
+        $equipment = match ($type) {
+            'shelf' => Shelf::query()->findOrFail($equipmentId),
+            'cooler' => Cooler::query()->findOrFail($equipmentId),
+            'stand' => Stand::query()->findOrFail($equipmentId),
+            default => abort(404),
+        };
+
+        $placements->createForEquipment($type, $equipment, [
+            'product_id' => $request->validated('product_id'),
+            'level_id' => $levelId,
+            'facings' => (int) $request->validated('facings'),
+        ]);
+
+        $params = ['store_id' => $equipment->store_id];
+        if ($type === 'shelf') {
+            $params['shelf_id'] = $equipment->id;
+        } elseif ($type === 'cooler') {
+            $params['cooler_id'] = $equipment->id;
+        } else {
+            $params['stand_id'] = $equipment->id;
+        }
 
         return redirect()
-            ->route('planograms.index', [
-                'store_id' => $model->store_id,
-                'shelf_id' => $model->id,
-            ])
+            ->route('planograms.index', $params)
             ->with('success', 'Товар размещён');
     }
 
     public function destroyPlacement(string $id): RedirectResponse
     {
         $placement = Placement::query()
-            ->with('shelfLevel.shelf:id,store_id')
+            ->with([
+                'shelfLevel.shelf:id,store_id',
+                'coolerShelfLevel.cooler:id,store_id',
+                'standShelfLevel.stand:id,store_id',
+            ])
             ->findOrFail($id);
 
-        $shelf = $placement->shelfLevel?->shelf;
-        $shelfId = $shelf?->id;
-        $storeId = $shelf?->store_id;
+        $params = [];
+        if ($placement->shelfLevel?->shelf) {
+            $params = [
+                'store_id' => $placement->shelfLevel->shelf->store_id,
+                'shelf_id' => $placement->shelfLevel->shelf->id,
+            ];
+        } elseif ($placement->coolerShelfLevel?->cooler) {
+            $params = [
+                'store_id' => $placement->coolerShelfLevel->cooler->store_id,
+                'cooler_id' => $placement->coolerShelfLevel->cooler->id,
+            ];
+        } elseif ($placement->standShelfLevel?->stand) {
+            $params = [
+                'store_id' => $placement->standShelfLevel->stand->store_id,
+                'stand_id' => $placement->standShelfLevel->stand->id,
+            ];
+        }
 
         $placement->delete();
 
         return redirect()
-            ->route('planograms.index', array_filter([
-                'store_id' => $storeId,
-                'shelf_id' => $shelfId,
-            ]))
+            ->route('planograms.index', array_filter($params))
             ->with('success', 'Размещение удалено.');
     }
 
@@ -399,13 +441,18 @@ class PlanogramController extends Controller implements HasMiddleware
      */
     private function transformCoolerDetail(Cooler $cooler): array
     {
+        $zoneColor = $cooler->department?->color ?: '#06b6d4';
+        $widthCm = max(1.0, round(((int) $cooler->width_mm) / 10, 2));
+        $levels = $this->transformEquipmentLevels($cooler->levels, $widthCm, $zoneColor);
+
         return [
             'type' => 'cooler',
             'id' => $cooler->id,
             'code' => $cooler->code,
             'name' => $cooler->displayLabel(),
-            'width_cm' => max(1, (int) round($cooler->width_mm / 10)),
+            'width_cm' => $widthCm,
             'width_mm' => $cooler->width_mm,
+            'width_m' => round($widthCm / 100, 2),
             'height_mm' => $cooler->height_mm,
             'depth_mm' => $cooler->depth_mm,
             'door_count' => $cooler->door_count,
@@ -413,17 +460,12 @@ class PlanogramController extends Controller implements HasMiddleware
             'temperature_zone_label' => Cooler::TEMPERATURE_ZONES[$cooler->temperature_zone] ?? $cooler->temperature_zone,
             'store_id' => $cooler->store_id,
             'store_name' => $this->localized($cooler->store?->name),
+            'department_id' => $cooler->department_id,
             'department_name' => $cooler->department
                 ? ($cooler->department->code.' — '.$this->localized($cooler->department->name))
                 : null,
-            'levels' => $cooler->levels->sortByDesc('level_number')->values()->map(fn ($level) => [
-                'id' => $level->id,
-                'level_number' => $level->level_number,
-                'height_cm' => max(1, (int) round($level->capacity_mm / 10)),
-                'height_from_floor_mm' => $level->height_from_floor_mm,
-                'capacity_mm' => $level->capacity_mm,
-                'placements' => [],
-            ])->all(),
+            'department_color' => $zoneColor,
+            'levels' => $levels,
         ];
     }
 
@@ -432,13 +474,18 @@ class PlanogramController extends Controller implements HasMiddleware
      */
     private function transformStandDetail(Stand $stand): array
     {
+        $zoneColor = $stand->department?->color ?: '#22c55e';
+        $widthCm = max(1.0, round(((int) $stand->width_mm) / 10, 2));
+        $levels = $this->transformEquipmentLevels($stand->levels, $widthCm, $zoneColor);
+
         return [
             'type' => 'stand',
             'id' => $stand->id,
             'code' => $stand->code,
             'name' => $stand->displayLabel(),
-            'width_cm' => max(1, (int) round($stand->width_mm / 10)),
+            'width_cm' => $widthCm,
             'width_mm' => $stand->width_mm,
+            'width_m' => round($widthCm / 100, 2),
             'height_mm' => $stand->height_mm,
             'depth_mm' => $stand->depth_mm,
             'stand_type' => $stand->stand_type,
@@ -446,18 +493,69 @@ class PlanogramController extends Controller implements HasMiddleware
             'has_back' => $stand->has_back,
             'store_id' => $stand->store_id,
             'store_name' => $this->localized($stand->store?->name),
+            'department_id' => $stand->department_id,
             'department_name' => $stand->department
                 ? ($stand->department->code.' — '.$this->localized($stand->department->name))
                 : null,
-            'levels' => $stand->levels->sortByDesc('level_number')->values()->map(fn ($level) => [
-                'id' => $level->id,
-                'level_number' => $level->level_number,
-                'height_cm' => max(1, (int) round($level->capacity_mm / 10)),
-                'height_from_floor_mm' => $level->height_from_floor_mm,
-                'capacity_mm' => $level->capacity_mm,
-                'placements' => [],
-            ])->all(),
+            'department_color' => $zoneColor,
+            'levels' => $levels,
         ];
+    }
+
+    /**
+     * @param  Collection<int, mixed>  $levels
+     * @return list<array<string, mixed>>
+     */
+    private function transformEquipmentLevels($levels, float $widthCm, string $zoneColor): array
+    {
+        return $levels
+            ->sortByDesc('level_number')
+            ->values()
+            ->map(function ($level) use ($widthCm, $zoneColor) {
+                $placements = collect($level->placements ?? [])->map(function (Placement $placement) use ($zoneColor) {
+                    $widthMm = $placement->product?->width_mm;
+                    $facings = (int) $placement->facings;
+                    $spanCm = max(0, (float) $placement->end_cm - (float) $placement->start_cm);
+                    $occupiedCm = $widthMm && $facings > 0
+                        ? round(($widthMm / 10) * $facings, 2)
+                        : round($spanCm, 2);
+
+                    return [
+                        'id' => $placement->id,
+                        'product_id' => $placement->product_id,
+                        'product_name' => $placement->product?->name,
+                        'product_barcode' => $placement->product?->barcode,
+                        'product_category' => $placement->product?->category,
+                        'product_volume_ml' => $placement->product?->volume_ml,
+                        'product_package_type' => $placement->product?->package_type,
+                        'width_mm' => $widthMm,
+                        'height_mm' => $placement->product?->height_mm,
+                        'depth_mm' => $placement->product?->depth_mm,
+                        'occupied_cm' => $occupiedCm,
+                        'start_cm' => $placement->start_cm,
+                        'end_cm' => $placement->end_cm,
+                        'facings' => $facings,
+                        'zone_color' => $zoneColor,
+                    ];
+                })->values();
+
+                $usedCm = round((float) $placements->sum('occupied_cm'), 2);
+                $fillPercent = $widthCm > 0 ? round(($usedCm / $widthCm) * 100, 1) : 0;
+
+                return [
+                    'id' => $level->id,
+                    'level_number' => $level->level_number,
+                    'height_cm' => max(1, (int) round(($level->capacity_mm ?? 0) / 10)),
+                    'height_from_floor_mm' => $level->height_from_floor_mm,
+                    'capacity_mm' => $level->capacity_mm,
+                    'used_cm' => $usedCm,
+                    'free_cm' => max(0, round($widthCm - $usedCm, 2)),
+                    'fill_percent' => $fillPercent,
+                    'overflow' => $usedCm > $widthCm + 0.01,
+                    'placements' => $placements->all(),
+                ];
+            })
+            ->all();
     }
 
     /**
