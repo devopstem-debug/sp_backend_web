@@ -128,7 +128,3 @@ class SyncStoreToFirebase implements ShouldBeUnique, ShouldQueue
                 '/export',
             );
         } catch (Throwable $notifyException) {
-            report($notifyException);
-        }
-    }
-}

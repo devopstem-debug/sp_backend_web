@@ -1,5 +1,5 @@
 import { useCan } from '@/lib/permissions';
-import { fireError, fireSuccess } from '@/lib/swal';
+import { fireConfirm, fireError, fireSuccess } from '@/lib/swal';
 import {
     ArrowDownTrayIcon,
     ArrowLeftIcon,
@@ -8,6 +8,7 @@ import {
     ArrowUturnRightIcon,
     MagnifyingGlassMinusIcon,
     MagnifyingGlassPlusIcon,
+    Squares2X2Icon,
     TrashIcon,
 } from '@heroicons/react/24/outline';
 import { Head, Link, usePage } from '@inertiajs/react';
@@ -25,6 +26,25 @@ const BASE_PX_PER_M = 80;
 const ROTATIONS = [0, 90, 180, 270];
 const ZOOM_MIN = 0.35;
 const ZOOM_MAX = 2.5;
+
+function selKey(kind, id) {
+    return `${kind}:${id}`;
+}
+
+function distanceMeters(x1, y1, x2, y2) {
+    const dx = Number(x2) - Number(x1);
+    const dy = Number(y2) - Number(y1);
+    return Math.round(Math.hypot(dx, dy) * 100) / 100;
+}
+
+function rectsIntersect(a, b) {
+    return (
+        a.x < b.x + b.w &&
+        a.x + a.w > b.x &&
+        a.y < b.y + b.d &&
+        a.y + a.d > b.y
+    );
+}
 
 const EQUIP_META = {
     shelf: { label: 'Стеллаж', emoji: '🛒', color: '#6366f1', listKey: 'shelves' },
@@ -172,6 +192,7 @@ function DraggableRect({
     onMoveEnd,
 }) {
     const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+    const movedRef = useRef(false);
 
     const fp = footprint(item);
     const widthPx = fp.w * BASE_PX_PER_M * scale;
@@ -200,7 +221,8 @@ function DraggableRect({
         if (!canDrag) return;
         e.stopPropagation();
         e.preventDefault();
-        onSelect();
+        onSelect(e);
+        movedRef.current = false;
 
         const startClientX = e.clientX;
         const startClientY = e.clientY;
@@ -208,10 +230,10 @@ function DraggableRect({
         const startPosY = Number(item.pos_y) || 0;
 
         const onPointerMove = (ev) => {
-            setDragOffset({
-                x: ev.clientX - startClientX,
-                y: ev.clientY - startClientY,
-            });
+            const ox = ev.clientX - startClientX;
+            const oy = ev.clientY - startClientY;
+            if (Math.abs(ox) + Math.abs(oy) > 3) movedRef.current = true;
+            setDragOffset({ x: ox, y: oy });
         };
 
         const onPointerUp = (ev) => {
@@ -219,8 +241,10 @@ function DraggableRect({
                 (ev.clientX - startClientX) / (BASE_PX_PER_M * scale);
             const dy =
                 -(ev.clientY - startClientY) / (BASE_PX_PER_M * scale);
-            const next = clampPosition(startPosX + dx, startPosY + dy);
-            onMoveEnd(next.x, next.y);
+            if (movedRef.current) {
+                const next = clampPosition(startPosX + dx, startPosY + dy);
+                onMoveEnd(next.x, next.y, dx, dy);
+            }
             setDragOffset({ x: 0, y: 0 });
             window.removeEventListener('pointermove', onPointerMove);
             window.removeEventListener('pointerup', onPointerUp);
@@ -249,7 +273,7 @@ function DraggableRect({
                 onPointerDown={handlePointerDown}
                 onClick={(e) => {
                     e.stopPropagation();
-                    onSelect();
+                    if (!movedRef.current) onSelect(e);
                 }}
             />
             <text
@@ -293,7 +317,7 @@ export default function Editor({
     );
     const [history, setHistory] = useState([]);
     const [future, setFuture] = useState([]);
-    const [selected, setSelected] = useState(null); // { kind, id }
+    const [selection, setSelection] = useState([]); // [{ kind, id }, ...]
     const [tool, setTool] = useState('select'); // select | wall | place:*
     const [wallDraft, setWallDraft] = useState(null);
     const [zoom, setZoom] = useState(1);
@@ -302,7 +326,12 @@ export default function Editor({
     const [saving, setSaving] = useState(false);
     const [dirty, setDirty] = useState(false);
     const [lastSavedAt, setLastSavedAt] = useState(null);
+    const [marquee, setMarquee] = useState(null); // { x0, y0, x1, y1 } meters
     const panning = useRef(null);
+    const marqueeActive = useRef(false);
+    const skipClickClear = useRef(false);
+
+    const selected = selection.length ? selection[selection.length - 1] : null;
 
     const gridStepM = (state.layout.grid_size_cm || 50) / 100;
     const scale = zoom;
@@ -401,6 +430,79 @@ export default function Editor({
         return state[listKey].find((i) => i.id === selected.id) || null;
     }, [selected, state]);
 
+    const isSelected = useCallback(
+        (kind, id) => selection.some((s) => s.kind === kind && s.id === id),
+        [selection],
+    );
+
+    const selectItem = useCallback((kind, id, e) => {
+        const additive = Boolean(e?.ctrlKey || e?.metaKey || e?.shiftKey);
+        setSelection((prev) => {
+            if (additive) {
+                const exists = prev.some((s) => s.kind === kind && s.id === id);
+                if (exists) {
+                    return prev.filter((s) => !(s.kind === kind && s.id === id));
+                }
+                return [...prev, { kind, id }];
+            }
+            return [{ kind, id }];
+        });
+    }, []);
+
+    const selectAllObjects = useCallback(() => {
+        setSelection([
+            ...allPlaced.map(({ kind, id }) => ({ kind, id })),
+            ...state.walls.map((w) => ({ kind: 'wall', id: w.id })),
+        ]);
+        setTool('select');
+        setWallDraft(null);
+    }, [allPlaced, state.walls]);
+
+    const hallAreaM2 = useMemo(() => {
+        const w = Number(state.layout.width_meters) || 0;
+        const h = Number(state.layout.height_meters) || 0;
+        return Math.round(w * h * 10) / 10;
+    }, [state.layout.height_meters, state.layout.width_meters]);
+
+    const wallDraftLength = useMemo(() => {
+        if (!wallDraft) return null;
+        return distanceMeters(
+            wallDraft.start_x,
+            wallDraft.start_y,
+            cursorMeters.x,
+            cursorMeters.y,
+        );
+    }, [cursorMeters.x, cursorMeters.y, wallDraft]);
+
+    const meterTicks = useMemo(() => {
+        const w = Number(state.layout.width_meters) || 0;
+        const h = Number(state.layout.height_meters) || 0;
+        const majorEvery = w > 30 || h > 30 ? 5 : w > 15 || h > 15 ? 2 : 1;
+        const xs = [];
+        const ys = [];
+        for (let m = 0; m <= Math.ceil(w); m += 1) {
+            if (m > w + 0.001) break;
+            xs.push({
+                m: Math.min(m, w),
+                major: m % majorEvery === 0 || m === 0,
+            });
+        }
+        if (xs.length === 0 || xs[xs.length - 1].m < w - 0.01) {
+            xs.push({ m: w, major: true });
+        }
+        for (let m = 0; m <= Math.ceil(h); m += 1) {
+            if (m > h + 0.001) break;
+            ys.push({
+                m: Math.min(m, h),
+                major: m % majorEvery === 0 || m === 0,
+            });
+        }
+        if (ys.length === 0 || ys[ys.length - 1].m < h - 0.01) {
+            ys.push({ m: h, major: true });
+        }
+        return { xs, ys };
+    }, [state.layout.height_meters, state.layout.width_meters]);
+
     const buildPayload = useCallback(() => {
         return {
             layout: state.layout,
@@ -478,7 +580,7 @@ export default function Editor({
                             data.payload.markers || [],
                         ),
                     );
-                    setSelected(null);
+                    setSelection([]);
                 }
                 if (!silent) fireSuccess(data?.message || 'Карта зала сохранена');
             } catch (error) {
@@ -535,8 +637,17 @@ export default function Editor({
                 e.preventDefault();
                 save();
             }
+            if (meta && e.key.toLowerCase() === 'a') {
+                if (document.activeElement?.tagName !== 'INPUT') {
+                    e.preventDefault();
+                    selectAllObjects();
+                }
+            }
             if (e.key === 'Delete' || e.key === 'Backspace') {
-                if (selected && document.activeElement?.tagName !== 'INPUT') {
+                if (
+                    selection.length > 0 &&
+                    document.activeElement?.tagName !== 'INPUT'
+                ) {
                     e.preventDefault();
                     deleteSelected();
                 }
@@ -544,13 +655,14 @@ export default function Editor({
             if (e.key === 'Escape') {
                 setTool('select');
                 setWallDraft(null);
-                setSelected(null);
+                setSelection([]);
+                setMarquee(null);
             }
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [undo, redo, save, selected]);
+    }, [undo, redo, save, selection, selectAllObjects]);
 
     const clientToMeters = (clientX, clientY) => {
         const rect = canvasRef.current?.getBoundingClientRect();
@@ -599,7 +711,7 @@ export default function Editor({
                     : item,
             ),
         }));
-        setSelected({ kind, id: free.id });
+        setSelection([{ kind, id: free.id }]);
         setTool('select');
     };
 
@@ -632,12 +744,16 @@ export default function Editor({
             ...prev,
             markers: [...prev.markers, marker],
         }));
-        setSelected({ kind: 'marker', id });
+        setSelection([{ kind: 'marker', id }]);
         setTool('select');
     };
 
     const onCanvasClick = (e) => {
         if (!canEdit) return;
+        if (skipClickClear.current) {
+            skipClickClear.current = false;
+            return;
+        }
         if (e.target !== canvasRef.current && e.target.tagName !== 'svg' && e.target.getAttribute('data-canvas') !== '1') {
             // allow clicking empty svg background
             if (e.target.tagName !== 'rect' || e.target.getAttribute('data-grid') !== '1') {
@@ -670,7 +786,7 @@ export default function Editor({
                 ],
             }));
             setWallDraft(null);
-            setSelected({ kind: 'wall', id });
+            setSelection([{ kind: 'wall', id }]);
             setTool('select');
             return;
         }
@@ -685,7 +801,88 @@ export default function Editor({
             return;
         }
 
-        setSelected(null);
+        if (!(e.ctrlKey || e.metaKey || e.shiftKey)) {
+            setSelection([]);
+        }
+    };
+
+    const finishMarquee = useCallback(
+        (box, additive) => {
+            const left = Math.min(box.x0, box.x1);
+            const right = Math.max(box.x0, box.x1);
+            const bottom = Math.min(box.y0, box.y1);
+            const top = Math.max(box.y0, box.y1);
+            const w = right - left;
+            const d = top - bottom;
+            if (w < 0.05 && d < 0.05) {
+                if (!additive) setSelection([]);
+                return;
+            }
+            const area = { x: left, y: bottom, w, d };
+            const hits = [];
+            allPlaced.forEach(({ kind, id, item }) => {
+                const fp = footprint({
+                    ...item,
+                    length_meters: item.length_meters ?? item.depth_meters,
+                });
+                if (rectsIntersect(area, fp)) {
+                    hits.push({ kind, id });
+                }
+            });
+            state.walls.forEach((wall) => {
+                const midX = (Number(wall.start_x) + Number(wall.end_x)) / 2;
+                const midY = (Number(wall.start_y) + Number(wall.end_y)) / 2;
+                if (
+                    midX >= left &&
+                    midX <= right &&
+                    midY >= bottom &&
+                    midY <= top
+                ) {
+                    hits.push({ kind: 'wall', id: wall.id });
+                }
+            });
+            setSelection((prev) => {
+                if (!additive) return hits;
+                const map = new Map(prev.map((s) => [selKey(s.kind, s.id), s]));
+                hits.forEach((h) => map.set(selKey(h.kind, h.id), h));
+                return [...map.values()];
+            });
+        },
+        [allPlaced, state.walls],
+    );
+
+    const onFloorPointerDown = (e) => {
+        if (!canEdit || tool !== 'select' || e.button !== 0) return;
+        if (e.target.getAttribute('data-grid') !== '1') return;
+        e.preventDefault();
+        const start = clientToMeters(e.clientX, e.clientY);
+        const additive = Boolean(e.ctrlKey || e.metaKey || e.shiftKey);
+        marqueeActive.current = true;
+        setMarquee({ x0: start.x, y0: start.y, x1: start.x, y1: start.y });
+
+        const onMove = (ev) => {
+            const cur = clientToMeters(ev.clientX, ev.clientY);
+            setMarquee({ x0: start.x, y0: start.y, x1: cur.x, y1: cur.y });
+        };
+        const onUp = (ev) => {
+            const cur = clientToMeters(ev.clientX, ev.clientY);
+            const box = { x0: start.x, y0: start.y, x1: cur.x, y1: cur.y };
+            const moved =
+                Math.abs(box.x1 - box.x0) > 0.05 ||
+                Math.abs(box.y1 - box.y0) > 0.05;
+            if (moved) {
+                skipClickClear.current = true;
+                finishMarquee(box, additive);
+            } else if (!additive) {
+                setSelection([]);
+            }
+            setMarquee(null);
+            marqueeActive.current = false;
+            window.removeEventListener('pointermove', onMove);
+            window.removeEventListener('pointerup', onUp);
+        };
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
     };
 
     const moveItem = useCallback(
@@ -694,26 +891,86 @@ export default function Editor({
 
             applyState((prev) => {
                 const next = clone(prev);
-                const patch = { pos_x: x, pos_y: y };
-
-                if (kind === 'marker') {
-                    next.markers = next.markers.map((m) =>
-                        m.id === id ? { ...m, ...patch } : m,
-                    );
-                } else {
-                    const listKey = EQUIP_META[kind]?.listKey;
-                    if (listKey) {
-                        next[listKey] = next[listKey].map((item) =>
-                            item.id === id ? { ...item, ...patch } : item,
-                        );
+                const findPos = (k, i) => {
+                    if (k === 'marker') {
+                        return next.markers.find((m) => m.id === i);
                     }
-                }
+                    const listKey = EQUIP_META[k]?.listKey;
+                    return listKey
+                        ? next[listKey].find((item) => item.id === i)
+                        : null;
+                };
+
+                const primary = findPos(kind, id);
+                if (!primary) return prev;
+
+                const dx = x - (Number(primary.pos_x) || 0);
+                const dy = y - (Number(primary.pos_y) || 0);
+
+                const group =
+                    selection.some((s) => s.kind === kind && s.id === id) &&
+                    selection.length > 1
+                        ? selection.filter((s) => s.kind !== 'wall')
+                        : [{ kind, id }];
+
+                const clampMove = (item, nx, ny) => {
+                    const nextFp = footprint({
+                        ...item,
+                        pos_x: snap(nx, gridStepM),
+                        pos_y: snap(ny, gridStepM),
+                        length_meters:
+                            item.length_meters ?? item.depth_meters,
+                    });
+                    let px = snap(Math.max(0, nextFp.x), gridStepM);
+                    let py = snap(Math.max(0, nextFp.y), gridStepM);
+                    px = Math.min(
+                        px,
+                        Math.max(0, state.layout.width_meters - nextFp.w),
+                    );
+                    py = Math.min(
+                        py,
+                        Math.max(0, state.layout.height_meters - nextFp.d),
+                    );
+                    return { pos_x: px, pos_y: py };
+                };
+
+                group.forEach((target) => {
+                    const item = findPos(target.kind, target.id);
+                    if (!item) return;
+                    const isPrimary =
+                        target.kind === kind && target.id === id;
+                    const pos = isPrimary
+                        ? { pos_x: x, pos_y: y }
+                        : clampMove(
+                              item,
+                              (Number(item.pos_x) || 0) + dx,
+                              (Number(item.pos_y) || 0) + dy,
+                          );
+                    if (target.kind === 'marker') {
+                        next.markers = next.markers.map((m) =>
+                            m.id === target.id ? { ...m, ...pos } : m,
+                        );
+                    } else {
+                        const listKey = EQUIP_META[target.kind]?.listKey;
+                        if (listKey) {
+                            next[listKey] = next[listKey].map((row) =>
+                                row.id === target.id ? { ...row, ...pos } : row,
+                            );
+                        }
+                    }
+                });
 
                 return next;
             });
-            setSelected({ kind, id });
         },
-        [applyState, canEdit],
+        [
+            applyState,
+            canEdit,
+            gridStepM,
+            selection,
+            state.layout.height_meters,
+            state.layout.width_meters,
+        ],
     );
 
     const updateSelected = (patch) => {
@@ -741,32 +998,72 @@ export default function Editor({
     };
 
     const deleteSelected = () => {
-        if (!selected || !canEdit) return;
+        if (!selection.length || !canEdit) return;
+        const keys = new Set(selection.map((s) => selKey(s.kind, s.id)));
         applyState((prev) => {
             const next = clone(prev);
-            if (selected.kind === 'marker') {
-                next.markers = next.markers.filter((m) => m.id !== selected.id);
-            } else if (selected.kind === 'wall') {
-                next.walls = next.walls.filter((w) => w.id !== selected.id);
-            } else {
-                const listKey = EQUIP_META[selected.kind]?.listKey;
-                if (listKey) {
-                    next[listKey] = next[listKey].map((item) =>
-                        item.id === selected.id
-                            ? {
-                                  ...item,
-                                  on_map: false,
-                                  pos_x: 0,
-                                  pos_y: 0,
-                                  rotation: 0,
-                              }
-                            : item,
-                    );
-                }
-            }
+            next.markers = next.markers.filter(
+                (m) => !keys.has(selKey('marker', m.id)),
+            );
+            next.walls = next.walls.filter(
+                (w) => !keys.has(selKey('wall', w.id)),
+            );
+            ['shelf', 'cooler', 'stand'].forEach((kind) => {
+                const listKey = EQUIP_META[kind].listKey;
+                next[listKey] = next[listKey].map((item) =>
+                    keys.has(selKey(kind, item.id))
+                        ? {
+                              ...item,
+                              on_map: false,
+                              pos_x: 0,
+                              pos_y: 0,
+                              rotation: 0,
+                          }
+                        : item,
+                );
+            });
             return next;
         });
-        setSelected(null);
+        setSelection([]);
+    };
+
+    const clearAllObjects = async () => {
+        if (!canEdit) return;
+        const ok = await fireConfirm(
+            'Сбросить все объекты?',
+            'Оборудование уйдёт с карты, маркеры и стены будут удалены. Можно отменить через Undo.',
+            'Сбросить',
+        );
+        if (!ok) return;
+        applyState((prev) => ({
+            ...prev,
+            walls: [],
+            markers: [],
+            shelves: prev.shelves.map((item) => ({
+                ...item,
+                on_map: false,
+                pos_x: 0,
+                pos_y: 0,
+                rotation: 0,
+            })),
+            coolers: prev.coolers.map((item) => ({
+                ...item,
+                on_map: false,
+                pos_x: 0,
+                pos_y: 0,
+                rotation: 0,
+            })),
+            stands: prev.stands.map((item) => ({
+                ...item,
+                on_map: false,
+                pos_x: 0,
+                pos_y: 0,
+                rotation: 0,
+            })),
+        }));
+        setSelection([]);
+        setWallDraft(null);
+        setTool('select');
     };
 
     const exportJson = () => {
@@ -852,6 +1149,28 @@ export default function Editor({
                     >
                         <MagnifyingGlassPlusIcon className="h-4 w-4" />
                     </button>
+                    {canEdit ? (
+                        <>
+                            <button
+                                type="button"
+                                onClick={selectAllObjects}
+                                className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700"
+                                title="Выделить всё (Ctrl+A)"
+                            >
+                                <Squares2X2Icon className="h-4 w-4" />
+                                Выделить всё
+                            </button>
+                            <button
+                                type="button"
+                                onClick={clearAllObjects}
+                                className="inline-flex items-center gap-1.5 rounded-lg bg-rose-900/40 px-3 py-1.5 text-xs font-medium text-rose-200 hover:bg-rose-800/50"
+                                title="Убрать все объекты с карты"
+                            >
+                                <TrashIcon className="h-4 w-4" />
+                                Сброс объектов
+                            </button>
+                        </>
+                    ) : null}
                     <button
                         type="button"
                         onClick={exportJson}
@@ -957,10 +1276,31 @@ export default function Editor({
                         Свойства
                     </div>
                     <div className="flex-1 overflow-y-auto p-3">
-                        {!selectedItem ? (
+                        {selection.length > 1 ? (
+                            <div className="space-y-2 text-xs">
+                                <p className="font-medium text-white">
+                                    Выбрано: {selection.length}
+                                </p>
+                                <p className="text-slate-400">
+                                    Ctrl/Shift+клик — добавить/убрать.
+                                    Рамка мышью — выделить группу.
+                                    Перетащите один — сдвинутся все.
+                                </p>
+                                {canEdit ? (
+                                    <button
+                                        type="button"
+                                        onClick={deleteSelected}
+                                        className="mt-2 inline-flex w-full items-center justify-center gap-1 rounded-lg bg-rose-600/20 px-2 py-1.5 text-rose-300 hover:bg-rose-600/30"
+                                    >
+                                        <TrashIcon className="h-4 w-4" />
+                                        Удалить выбранные
+                                    </button>
+                                ) : null}
+                            </div>
+                        ) : !selectedItem ? (
                             <p className="text-xs text-slate-500">
-                                «Выбор / перемещение» — тащите объект мышью.
-                                Другие инструменты — только для добавления.
+                                «Выбор» — клик, Ctrl+клик или рамка мышью.
+                                Сетка в метрах по краям зала.
                             </p>
                         ) : selected.kind === 'wall' ? (
                             <div className="space-y-2 text-xs">
@@ -968,6 +1308,18 @@ export default function Editor({
                                 <p className="text-slate-400">
                                     ({selectedItem.start_x}, {selectedItem.start_y}) → (
                                     {selectedItem.end_x}, {selectedItem.end_y})
+                                </p>
+                                <p className="text-slate-300">
+                                    Длина:{' '}
+                                    <span className="font-semibold text-white">
+                                        {distanceMeters(
+                                            selectedItem.start_x,
+                                            selectedItem.start_y,
+                                            selectedItem.end_x,
+                                            selectedItem.end_y,
+                                        )}{' '}
+                                        м
+                                    </span>
                                 </p>
                                 {canEdit ? (
                                     <button
@@ -1187,8 +1539,8 @@ export default function Editor({
                     onClick={onCanvasClick}
                 >
                         <svg
-                            width={canvasW + pan.x + 80}
-                            height={canvasH + pan.y + 80}
+                            width={canvasW + pan.x + 120}
+                            height={canvasH + pan.y + 100}
                             className="block"
                         >
                             <g transform={`translate(${pan.x}, ${pan.y})`}>
@@ -1207,7 +1559,117 @@ export default function Editor({
                                     fill="#152033"
                                     stroke="#38bdf8"
                                     strokeWidth={3}
+                                    onPointerDown={onFloorPointerDown}
                                 />
+
+                                {/* Meter rulers + hall size */}
+                                <text
+                                    x={(state.layout.width_meters * BASE_PX_PER_M * scale) / 2}
+                                    y={-22}
+                                    textAnchor="middle"
+                                    fill="#94a3b8"
+                                    fontSize={12}
+                                    fontWeight={600}
+                                >
+                                    Ширина {state.layout.width_meters} м · Площадь{' '}
+                                    {hallAreaM2} м²
+                                </text>
+                                <text
+                                    x={-18}
+                                    y={(state.layout.height_meters * BASE_PX_PER_M * scale) / 2}
+                                    textAnchor="middle"
+                                    fill="#94a3b8"
+                                    fontSize={12}
+                                    fontWeight={600}
+                                    transform={`rotate(-90 ${-18} ${(state.layout.height_meters * BASE_PX_PER_M * scale) / 2})`}
+                                >
+                                    Глубина {state.layout.height_meters} м
+                                </text>
+                                {meterTicks.xs.map(({ m, major }) => {
+                                    const x = svgX(m, scale);
+                                    const hallH =
+                                        state.layout.height_meters *
+                                        BASE_PX_PER_M *
+                                        scale;
+                                    return (
+                                        <g key={`tick-x-${m}`}>
+                                            <line
+                                                x1={x}
+                                                y1={hallH}
+                                                x2={x}
+                                                y2={hallH + (major ? 10 : 5)}
+                                                stroke="#64748b"
+                                                strokeWidth={1}
+                                            />
+                                            {major ? (
+                                                <text
+                                                    x={x}
+                                                    y={hallH + 22}
+                                                    textAnchor="middle"
+                                                    fill="#94a3b8"
+                                                    fontSize={10}
+                                                >
+                                                    {m} м
+                                                </text>
+                                            ) : null}
+                                        </g>
+                                    );
+                                })}
+                                {meterTicks.ys.map(({ m, major }) => {
+                                    const y = svgY(m, state.layout.height_meters, scale);
+                                    return (
+                                        <g key={`tick-y-${m}`}>
+                                            <line
+                                                x1={0}
+                                                y1={y}
+                                                x2={major ? -10 : -5}
+                                                y2={y}
+                                                stroke="#64748b"
+                                                strokeWidth={1}
+                                            />
+                                            {major ? (
+                                                <text
+                                                    x={-14}
+                                                    y={y + 3}
+                                                    textAnchor="end"
+                                                    fill="#94a3b8"
+                                                    fontSize={10}
+                                                >
+                                                    {m}
+                                                </text>
+                                            ) : null}
+                                        </g>
+                                    );
+                                })}
+                                {/* 1 m scale bar */}
+                                <g
+                                    transform={`translate(8, ${
+                                        state.layout.height_meters *
+                                            BASE_PX_PER_M *
+                                            scale -
+                                        28
+                                    })`}
+                                >
+                                    <rect
+                                        x={0}
+                                        y={0}
+                                        width={BASE_PX_PER_M * scale}
+                                        height={8}
+                                        fill="#38bdf8"
+                                        fillOpacity={0.85}
+                                        rx={1}
+                                    />
+                                    <text
+                                        x={(BASE_PX_PER_M * scale) / 2}
+                                        y={20}
+                                        textAnchor="middle"
+                                        fill="#e2e8f0"
+                                        fontSize={10}
+                                        fontWeight={600}
+                                    >
+                                        1 м
+                                    </text>
+                                </g>
 
                                 {/* Compass labels */}
                                 <text
@@ -1217,7 +1679,7 @@ export default function Editor({
                                     fill="#64748b"
                                     fontSize={11}
                                 >
-                                    С (Y→)
+                                    С (+Y)
                                 </text>
                                 <text
                                     x={(state.layout.width_meters * BASE_PX_PER_M * scale) / 2}
@@ -1225,7 +1687,7 @@ export default function Editor({
                                         state.layout.height_meters *
                                             BASE_PX_PER_M *
                                             scale +
-                                        14
+                                        36
                                     }
                                     textAnchor="middle"
                                     fill="#64748b"
@@ -1299,43 +1761,70 @@ export default function Editor({
                                 {/* Walls */}
                                 {state.walls.map((wall) => {
                                     const isDoor = wall.wall_type === 'door';
-                                    const isSelected =
-                                        selected?.kind === 'wall' &&
-                                        selected.id === wall.id;
+                                    const wallSelected = isSelected('wall', wall.id);
+                                    const len = distanceMeters(
+                                        wall.start_x,
+                                        wall.start_y,
+                                        wall.end_x,
+                                        wall.end_y,
+                                    );
+                                    const midX =
+                                        (Number(wall.start_x) + Number(wall.end_x)) / 2;
+                                    const midY =
+                                        (Number(wall.start_y) + Number(wall.end_y)) / 2;
                                     return (
-                                        <line
-                                            key={wall.id}
-                                            x1={svgX(wall.start_x, scale)}
-                                            y1={svgY(
-                                                wall.start_y,
-                                                state.layout.height_meters,
-                                                scale,
-                                            )}
-                                            x2={svgX(wall.end_x, scale)}
-                                            y2={svgY(
-                                                wall.end_y,
-                                                state.layout.height_meters,
-                                                scale,
-                                            )}
-                                            stroke={
-                                                isSelected
-                                                    ? '#f8fafc'
-                                                    : isDoor
-                                                      ? '#22c55e'
-                                                      : '#94a3b8'
-                                            }
-                                            strokeWidth={isSelected ? 5 : isDoor ? 3 : 4}
-                                            strokeLinecap="round"
-                                            strokeDasharray={isDoor ? '8 6' : undefined}
-                                            className="cursor-pointer"
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                setSelected({
-                                                    kind: 'wall',
-                                                    id: wall.id,
-                                                });
-                                            }}
-                                        />
+                                        <g key={wall.id}>
+                                            <line
+                                                x1={svgX(wall.start_x, scale)}
+                                                y1={svgY(
+                                                    wall.start_y,
+                                                    state.layout.height_meters,
+                                                    scale,
+                                                )}
+                                                x2={svgX(wall.end_x, scale)}
+                                                y2={svgY(
+                                                    wall.end_y,
+                                                    state.layout.height_meters,
+                                                    scale,
+                                                )}
+                                                stroke={
+                                                    wallSelected
+                                                        ? '#f8fafc'
+                                                        : isDoor
+                                                          ? '#22c55e'
+                                                          : '#94a3b8'
+                                                }
+                                                strokeWidth={
+                                                    wallSelected ? 5 : isDoor ? 3 : 4
+                                                }
+                                                strokeLinecap="round"
+                                                strokeDasharray={
+                                                    isDoor ? '8 6' : undefined
+                                                }
+                                                className="cursor-pointer"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    selectItem('wall', wall.id, e);
+                                                }}
+                                            />
+                                            <text
+                                                x={svgX(midX, scale)}
+                                                y={
+                                                    svgY(
+                                                        midY,
+                                                        state.layout.height_meters,
+                                                        scale,
+                                                    ) - 6
+                                                }
+                                                textAnchor="middle"
+                                                fill="#cbd5e1"
+                                                fontSize={10}
+                                                fontWeight={600}
+                                                pointerEvents="none"
+                                            >
+                                                {len} м
+                                            </text>
+                                        </g>
                                     );
                                 })}
 
@@ -1389,15 +1878,86 @@ export default function Editor({
                                 })()}
 
                                 {wallDraft ? (
-                                    <circle
-                                        cx={svgX(wallDraft.start_x, scale)}
-                                        cy={svgY(
-                                            wallDraft.start_y,
+                                    <g>
+                                        <circle
+                                            cx={svgX(wallDraft.start_x, scale)}
+                                            cy={svgY(
+                                                wallDraft.start_y,
+                                                state.layout.height_meters,
+                                                scale,
+                                            )}
+                                            r={4}
+                                            fill="#38bdf8"
+                                        />
+                                        <line
+                                            x1={svgX(wallDraft.start_x, scale)}
+                                            y1={svgY(
+                                                wallDraft.start_y,
+                                                state.layout.height_meters,
+                                                scale,
+                                            )}
+                                            x2={svgX(cursorMeters.x, scale)}
+                                            y2={svgY(
+                                                cursorMeters.y,
+                                                state.layout.height_meters,
+                                                scale,
+                                            )}
+                                            stroke="#38bdf8"
+                                            strokeWidth={3}
+                                            strokeDasharray="6 4"
+                                            pointerEvents="none"
+                                        />
+                                        <text
+                                            x={svgX(
+                                                (wallDraft.start_x + cursorMeters.x) / 2,
+                                                scale,
+                                            )}
+                                            y={
+                                                svgY(
+                                                    (wallDraft.start_y + cursorMeters.y) /
+                                                        2,
+                                                    state.layout.height_meters,
+                                                    scale,
+                                                ) - 8
+                                            }
+                                            textAnchor="middle"
+                                            fill="#7dd3fc"
+                                            fontSize={12}
+                                            fontWeight={700}
+                                            pointerEvents="none"
+                                        >
+                                            {wallDraftLength ?? 0} м
+                                        </text>
+                                    </g>
+                                ) : null}
+
+                                {marquee ? (
+                                    <rect
+                                        x={svgX(
+                                            Math.min(marquee.x0, marquee.x1),
+                                            scale,
+                                        )}
+                                        y={svgY(
+                                            Math.max(marquee.y0, marquee.y1),
                                             state.layout.height_meters,
                                             scale,
                                         )}
-                                        r={4}
+                                        width={
+                                            Math.abs(marquee.x1 - marquee.x0) *
+                                            BASE_PX_PER_M *
+                                            scale
+                                        }
+                                        height={
+                                            Math.abs(marquee.y1 - marquee.y0) *
+                                            BASE_PX_PER_M *
+                                            scale
+                                        }
                                         fill="#38bdf8"
+                                        fillOpacity={0.15}
+                                        stroke="#38bdf8"
+                                        strokeWidth={1.5}
+                                        strokeDasharray="4 3"
+                                        pointerEvents="none"
                                     />
                                 ) : null}
 
@@ -1414,17 +1974,14 @@ export default function Editor({
                                                 hallWidth={state.layout.width_meters}
                                                 gridStepM={gridStepM}
                                                 canDrag={canEdit && tool === 'select'}
-                                                selected={
-                                                    selected?.kind === kind &&
-                                                    selected.id === item.id
-                                                }
+                                                selected={isSelected(kind, item.id)}
                                                 invalid={invalidIds.has(
                                                     `${kind}:${item.id}`,
                                                 )}
                                                 color={item.color || EQUIP_META[kind].color}
                                                 label={item.code}
-                                                onSelect={() =>
-                                                    setSelected({ kind, id: item.id })
+                                                onSelect={(e) =>
+                                                    selectItem(kind, item.id, e)
                                                 }
                                                 onMoveEnd={(x, y) =>
                                                     moveItem(kind, item.id, x, y)
@@ -1446,10 +2003,7 @@ export default function Editor({
                                         hallWidth={state.layout.width_meters}
                                         gridStepM={gridStepM}
                                         canDrag={canEdit && tool === 'select'}
-                                        selected={
-                                            selected?.kind === 'marker' &&
-                                            selected.id === marker.id
-                                        }
+                                        selected={isSelected('marker', marker.id)}
                                         invalid={invalidIds.has(
                                             `marker:${marker.id}`,
                                         )}
@@ -1458,11 +2012,8 @@ export default function Editor({
                                             MARKER_META[marker.marker_type]?.color
                                         }
                                         label={marker.code}
-                                        onSelect={() =>
-                                            setSelected({
-                                                kind: 'marker',
-                                                id: marker.id,
-                                            })
+                                        onSelect={(e) =>
+                                            selectItem('marker', marker.id, e)
                                         }
                                         onMoveEnd={(x, y) =>
                                             moveItem('marker', marker.id, x, y)
@@ -1476,13 +2027,16 @@ export default function Editor({
                         <div className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded-full bg-indigo-600/90 px-3 py-1 text-xs font-medium text-white shadow">
                             {tool === 'wall'
                                 ? wallDraft
-                                    ? 'Кликните конечную точку стены'
+                                    ? `Конец стены · сейчас ${wallDraftLength ?? 0} м`
                                     : 'Кликните начальную точку стены'
                                 : 'Кликните на холст, чтобы разместить элемент'}
                         </div>
                     ) : (
                         <div className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded-full bg-emerald-700/90 px-3 py-1 text-xs font-medium text-white shadow">
-                            Перетащите объект мышью, чтобы переместить
+                            Рамка / Ctrl+клик — выбор · перетащите — сдвиг
+                            {selection.length
+                                ? ` · выбрано ${selection.length}`
+                                : ''}
                         </div>
                     )}
                 </div>
@@ -1498,8 +2052,14 @@ export default function Editor({
                     <span>Ячейка: {statusCell}</span>
                     <span>
                         Сетка: {state.layout.grid_size_cm} см · Зал:{' '}
-                        {state.layout.width_meters}×{state.layout.height_meters} м
+                        {state.layout.width_meters}×{state.layout.height_meters} м ·{' '}
+                        {hallAreaM2} м²
                     </span>
+                    {selection.length > 0 ? (
+                        <span className="text-sky-300">
+                            Выбрано: {selection.length}
+                        </span>
+                    ) : null}
                 </div>
                 <div className="flex gap-3">
                     {invalidIds.size > 0 ? (

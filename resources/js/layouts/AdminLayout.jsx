@@ -25,6 +25,7 @@ import {
     HomeIcon,
     MapIcon,
     ScaleIcon,
+    ServerStackIcon,
     Squares2X2Icon,
     TableCellsIcon,
     TagIcon,
@@ -197,6 +198,13 @@ const navigation = [
         href: '/analytics',
         icon: ChartBarIcon,
         permission: 'view-analytics',
+        section: 'system',
+    },
+    {
+        name: 'Ресурсы',
+        href: '/system-health',
+        icon: ServerStackIcon,
+        superAdminOnly: true,
         section: 'system',
     },
     {

@@ -26,6 +26,7 @@ use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\ShelfController;
 use App\Http\Controllers\StandController;
 use App\Http\Controllers\StoreController;
+use App\Http\Controllers\SystemHealthController;
 use App\Http\Controllers\TenantController;
 use App\Http\Controllers\UserController;
 use App\Support\Permissions;
@@ -61,6 +62,10 @@ Route::middleware(['auth', 'user.active', 'tenant.active'])->group(function () {
 Route::middleware(['auth', 'user.active', 'tenant.active', 'subscription.active'])->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
     Route::get('/analytics', [AnalyticsController::class, 'index'])->name('analytics.index');
+    Route::get('/system-health', [SystemHealthController::class, 'index'])
+        ->name('system-health.index');
+    Route::get('/system-health/metrics', [SystemHealthController::class, 'metrics'])
+        ->name('system-health.metrics');
 
     Route::get('chat', [ChatPageController::class, 'index'])->name('chat.index');
     Route::get('chat/conversations', [ChatController::class, 'conversations'])->name('chat.conversations');
