@@ -22,6 +22,7 @@ function freeCm(shelf, levelId) {
         return Number(shelf.width_cm) || 0;
     }
 
+    // Совпадает с PlacementService::nextStartCm — место после последнего end_cm.
     const used = (level.placements || []).reduce(
         (max, placement) => Math.max(max, Number(placement.end_cm) || 0),
         0,
@@ -30,13 +31,13 @@ function freeCm(shelf, levelId) {
     return Math.max(0, Math.round((Number(shelf.width_cm) - used) * 100) / 100);
 }
 
-export default function AddPlacementModal({ shelf, onClose, onAdded }) {
+export default function AddPlacementModal({ shelf, initialLevelId = null, onClose, onAdded }) {
     const [selectedProduct, setSelectedProduct] = useState(null);
 
     const { data, setData, post, processing, errors, reset, clearErrors } =
         useForm({
             product_id: '',
-            shelf_level_id: shelf.levels[0]?.id || '',
+            shelf_level_id: initialLevelId || shelf.levels[0]?.id || '',
             facings: 1,
         });
 
@@ -50,6 +51,7 @@ export default function AddPlacementModal({ shelf, onClose, onAdded }) {
             needed,
             free,
             overflows: selectedProduct && widthMm > 0 ? needed > free : false,
+            missingWidth: selectedProduct && !(Number(widthMm) > 0),
         };
     }, [selectedProduct, data.facings, data.shelf_level_id, shelf]);
 
@@ -72,9 +74,16 @@ export default function AddPlacementModal({ shelf, onClose, onAdded }) {
             return;
         }
 
+        if (space.missingWidth) {
+            fireError(
+                'У товара не указана ширина (мм). Сначала заполните габариты в каталоге или через бота.',
+            );
+            return;
+        }
+
         if (space.overflows) {
             fireError(
-                `Нельзя превысить ширину полки. Свободно: ${space.free} см, нужно: ${space.needed} см.`,
+                `Нельзя превысить ширину полки (${shelf.width_cm} см). Свободно: ${space.free} см, нужно: ${space.needed} см.`,
             );
             return;
         }
@@ -137,6 +146,18 @@ export default function AddPlacementModal({ shelf, onClose, onAdded }) {
 
                     <div className="rounded-xl border border-slate-800 bg-[#0e172b] px-3 py-2.5 text-sm text-slate-200">
                         <p>
+                            Стеллаж:{' '}
+                            <span className="font-semibold">
+                                {shelf.width_m
+                                    ? `${shelf.width_m} м`
+                                    : `${shelf.width_cm} см`}
+                            </span>
+                            <span className="text-slate-400">
+                                {' '}
+                                · свободно {space.free} см
+                            </span>
+                        </p>
+                        <p>
                             Ширина товара:{' '}
                             <span className="font-semibold">
                                 {selectedProduct
@@ -153,7 +174,7 @@ export default function AddPlacementModal({ shelf, onClose, onAdded }) {
                             <span
                                 className={
                                     space.overflows
-                                        ? 'font-semibold text-red-600'
+                                        ? 'font-semibold text-rose-400'
                                         : 'font-semibold'
                                 }
                             >
@@ -161,15 +182,15 @@ export default function AddPlacementModal({ shelf, onClose, onAdded }) {
                                     ? `${space.needed} см`
                                     : '—'}
                             </span>
-                            {selectedProduct && space.widthMm > 0 && (
-                                <span className="text-slate-400">
-                                    {' '}
-                                    / свободно {space.free} см
-                                </span>
-                            )}
                         </p>
+                        {space.missingWidth ? (
+                            <p className="mt-1 text-xs text-amber-300">
+                            Нет ширины у товара — сначала укажите ширину (мм)
+                            в каталоге или через бота.
+                            </p>
+                        ) : null}
                         <p className="mt-1 text-xs text-slate-400">
-                            Формула: (ширина мм ÷ 10) × фейсинг
+                            Формула: (ширина мм ÷ 10) × фейсинг ≤ длина стеллажа
                         </p>
                     </div>
 
@@ -179,7 +200,8 @@ export default function AddPlacementModal({ shelf, onClose, onAdded }) {
                             processing ||
                             !data.product_id ||
                             !data.shelf_level_id ||
-                            space.overflows
+                            space.overflows ||
+                            space.missingWidth
                         }
                         className="w-full rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:from-indigo-500 hover:to-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
                     >

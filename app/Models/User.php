@@ -100,6 +100,20 @@ class User extends Authenticatable
         return $this->hasRole(Permissions::ROLE_SUPER_ADMIN, 'web');
     }
 
+    /**
+     * Network Manager — роль «Заместитель» (исторически Network Manager).
+     */
+    public function isNetworkManager(): bool
+    {
+        return $this->hasRole(Permissions::ROLE_DEPUTY, 'web')
+            || $this->hasRole('Network Manager', 'web');
+    }
+
+    public function canSetupFloorPlanMap(): bool
+    {
+        return $this->isSuperAdmin() || $this->isNetworkManager();
+    }
+
     public function isDepartmentHead(): bool
     {
         return $this->hasRole(Permissions::ROLE_HEAD, 'web');

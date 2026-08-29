@@ -120,6 +120,11 @@ class Store extends Model
         return $this->hasMany(Wall::class);
     }
 
+    public function layoutMarkers(): HasMany
+    {
+        return $this->hasMany(StoreLayoutMarker::class);
+    }
+
     public function getActivitylogOptions(): LogOptions
     {
         return LogOptions::defaults()

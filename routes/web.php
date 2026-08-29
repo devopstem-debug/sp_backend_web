@@ -19,6 +19,7 @@ use App\Http\Controllers\LogController;
 use App\Http\Controllers\PlanController;
 use App\Http\Controllers\PlanogramController;
 use App\Http\Controllers\PricingController;
+use App\Http\Controllers\ProductBotController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\SettingsController;
@@ -124,6 +125,17 @@ Route::middleware(['auth', 'user.active', 'tenant.active', 'subscription.active'
     Route::get('database', [DatabaseController::class, 'index'])->name('database.index');
     Route::get('database/{table}', [DatabaseController::class, 'show'])->name('database.show');
 
+    Route::get('product-bot', [ProductBotController::class, 'index'])->name('product-bot.index');
+    Route::post('product-bot/scan', [ProductBotController::class, 'scan'])->name('product-bot.scan');
+    Route::post('product-bot/jobs/{job}/accept', [ProductBotController::class, 'accept'])
+        ->name('product-bot.accept');
+    Route::post('product-bot/jobs/{job}/reject', [ProductBotController::class, 'reject'])
+        ->name('product-bot.reject');
+    Route::post('product-bot/rules', [ProductBotController::class, 'storeRule'])
+        ->name('product-bot.rules.store');
+    Route::delete('product-bot/rules/{rule}', [ProductBotController::class, 'destroyRule'])
+        ->name('product-bot.rules.destroy');
+
     Route::get('logs', [LogController::class, 'index'])->name('logs.index');
     Route::get('logs/audit', [LogController::class, 'audit'])->name('logs.audit');
     Route::get('logs/logins', [LogController::class, 'logins'])->name('logs.logins');
@@ -202,6 +214,9 @@ Route::middleware(['auth', 'user.active', 'tenant.active', 'subscription.active'
         ->name('planograms.placements.destroy');
 
     Route::get('floor-plan', [FloorPlanController::class, 'stores'])->name('floor-plan.stores');
+    Route::get('floor-plan/create', [FloorPlanController::class, 'create'])->name('floor-plan.create');
+    Route::post('floor-plan/setup', [FloorPlanController::class, 'storeSetup'])->name('floor-plan.setup');
+    Route::get('floor-plan/{store}/edit', [FloorPlanController::class, 'edit'])->name('floor-plan.edit');
     Route::get('floor-plan/{store}', [FloorPlanController::class, 'index'])->name('floor-plan.index');
     Route::post('floor-plan/{store}/save', [FloorPlanController::class, 'save'])->name('floor-plan.save');
     Route::post('floor-plan/{store}/walls', [FloorPlanController::class, 'addWall'])->name('floor-plan.walls.store');

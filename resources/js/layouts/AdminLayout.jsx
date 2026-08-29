@@ -16,6 +16,7 @@ import {
     ChatBubbleLeftRightIcon,
     CircleStackIcon,
     Cog6ToothIcon,
+    CpuChipIcon,
     CreditCardIcon,
     CubeIcon,
     CubeTransparentIcon,
@@ -185,6 +186,13 @@ const navigation = [
         section: 'platform',
     },
     {
+        name: 'Бот товаров',
+        href: '/product-bot',
+        icon: CpuChipIcon,
+        superAdminOnly: true,
+        section: 'platform',
+    },
+    {
         name: 'Аналитика',
         href: '/analytics',
         icon: ChartBarIcon,
@@ -217,7 +225,11 @@ function isNavActive(currentUrl, href) {
     return path === href || path.startsWith(`${href}/`);
 }
 
-function isVisible(item, can, canChat, user) {
+function isVisible(item, can, canChat, user, isSuperAdmin) {
+    if (item.superAdminOnly && !isSuperAdmin) {
+        return false;
+    }
+
     if (item.tenantOnly && !user?.tenant_id) {
         return false;
     }
@@ -317,11 +329,12 @@ function SidebarShell({ currentUrl, onNavigate, groups, extraHeader }) {
 export default function AdminLayout({ header, children, flush = false }) {
     const { url } = usePage();
     const user = usePage().props.auth?.user;
+    const isSuperAdmin = Boolean(usePage().props.auth?.is_super_admin);
     const canChat = Boolean(usePage().props.can_chat);
     const can = useCan();
     const canSettings = can('edit-profile', 'edit-security');
     const items = navigation.filter((item) =>
-        isVisible(item, can, canChat, user),
+        isVisible(item, can, canChat, user, isSuperAdmin),
     );
     const groups = groupNavigation(items);
 
@@ -352,7 +365,7 @@ export default function AdminLayout({ header, children, flush = false }) {
             return;
         }
 
-        setMobileOpen(true);
+        setMobileOpen((open) => !open);
     };
 
     return (
@@ -411,7 +424,7 @@ export default function AdminLayout({ header, children, flush = false }) {
 
             <aside
                 className={clsx(
-                    'fixed inset-y-0 left-0 z-30 hidden flex-col overflow-hidden border-r border-white/5 bg-slate-900 transition-[width] duration-300 ease-in-out lg:flex',
+                    'fixed inset-y-0 left-0 z-40 hidden flex-col overflow-hidden border-r border-white/5 bg-slate-900 transition-[width] duration-300 ease-in-out lg:flex',
                     desktopCollapsed ? 'w-0 border-transparent' : 'w-64',
                 )}
                 aria-hidden={desktopCollapsed}
@@ -428,7 +441,7 @@ export default function AdminLayout({ header, children, flush = false }) {
                         currentUrl={url}
                         groups={groups}
                         extraHeader={
-                            <div className="flex h-16 shrink-0 items-center justify-between gap-2 px-4">
+                            <div className="flex h-16 shrink-0 items-center gap-2 px-4">
                                 <Link
                                     href="/dashboard"
                                     className="flex min-w-0 items-center gap-2"
@@ -438,15 +451,6 @@ export default function AdminLayout({ header, children, flush = false }) {
                                         Smart Planogram
                                     </span>
                                 </Link>
-                                <button
-                                    type="button"
-                                    onClick={() => setDesktopCollapsed(true)}
-                                    className="rounded-md p-2 text-slate-400 hover:bg-slate-800 hover:text-white focus:outline-none"
-                                    title="Скрыть меню"
-                                >
-                                    <span className="sr-only">Скрыть меню</span>
-                                    <Bars3Icon className="h-5 w-5" aria-hidden="true" />
-                                </button>
                             </div>
                         }
                     />
@@ -468,7 +472,7 @@ export default function AdminLayout({ header, children, flush = false }) {
                 )}
             >
                 <PushPermissionBanner />
-                <header className="sticky top-0 z-20 border-b border-slate-800 bg-[#0e172b]/90 backdrop-blur">
+                <header className="sticky top-0 z-30 border-b border-slate-800 bg-[#0e172b]/90 backdrop-blur">
                     <div className="flex h-16 items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
                         <div className="flex min-w-0 flex-1 items-center gap-3">
                             <button

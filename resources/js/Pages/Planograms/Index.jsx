@@ -1,91 +1,285 @@
 import { Head, router, usePage } from '@inertiajs/react';
 import {
-    Bars3Icon,
+    ArrowDownTrayIcon,
+    PencilSquareIcon,
     PlusIcon,
-    TrashIcon,
+    PrinterIcon,
+    Squares2X2Icon,
+    TableCellsIcon,
     XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { useEffect, useMemo, useState } from 'react';
 import AddPlacementModal from '@/Components/Planogram/AddPlacementModal';
-import Sidebar from '@/Components/Planogram/Sidebar';
-import Tabs from '@/Components/Planogram/Tabs';
-import ShelfView from '@/Components/Planogram/ShelfView';
 import AdminLayout from '@/layouts/AdminLayout';
 import { useCan } from '@/lib/permissions';
 import { fireConfirm, fireError, fireSuccess } from '@/lib/swal';
 import clsx from 'clsx';
 
-const TABS_STORAGE_KEY = 'planogram.hybrid.tabs.v2';
+const selectClass =
+    'rounded-lg border border-slate-700 bg-[#0e172b] px-3 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40';
 
-function tabKey(type, id) {
-    return `${type}:${id}`;
+function formatWidthLabel(cm, meters) {
+    const m = meters ?? (cm ? Math.round((Number(cm) / 100) * 100) / 100 : null);
+    if (m != null && !Number.isNaN(m)) {
+        return `${m} м (${Math.round(Number(cm))} см)`;
+    }
+    return cm ? `${Math.round(Number(cm))} см` : '—';
 }
 
-function equipmentQuery(type, id) {
-    if (!id) {
-        return {};
-    }
-
-    if (type === 'cooler') {
-        return { cooler_id: id };
-    }
-    if (type === 'stand') {
-        return { stand_id: id };
-    }
-
-    return { shelf_id: id };
+function FillBar({ percent, overflow }) {
+    const capped = Math.min(100, Math.max(0, Number(percent) || 0));
+    return (
+        <div className="mt-2">
+            <div className="flex items-center justify-between text-xs text-slate-400">
+                <span>Заполнение</span>
+                <span
+                    className={clsx(
+                        'font-semibold',
+                        overflow ? 'text-rose-400' : percent >= 85 ? 'text-amber-300' : 'text-emerald-300',
+                    )}
+                >
+                    {overflow
+                        ? `Переполнено: ${percent}% от ширины`
+                        : `${percent}%`}
+                </span>
+            </div>
+            <div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-800">
+                <div
+                    className={clsx(
+                        'h-full rounded-full transition-all duration-500',
+                        overflow
+                            ? 'bg-rose-500'
+                            : percent >= 85
+                              ? 'bg-amber-400'
+                              : 'bg-emerald-500',
+                    )}
+                    style={{ width: `${overflow ? 100 : capped}%` }}
+                />
+            </div>
+        </div>
+    );
 }
 
-function readStoredSession(storeId) {
-    if (!storeId || typeof window === 'undefined') {
-        return { tabs: [], activeKey: null };
-    }
+function ProductCard({ placement, canDelete, onRemove }) {
+    const color = placement.zone_color || '#6366f1';
 
-    try {
-        const raw = window.localStorage.getItem(TABS_STORAGE_KEY);
-        if (!raw) {
-            return { tabs: [], activeKey: null };
-        }
-        const parsed = JSON.parse(raw);
-        const session = parsed?.[storeId];
-        if (!session || !Array.isArray(session.tabs)) {
-            return { tabs: [], activeKey: null };
-        }
+    return (
+        <div
+            className="group relative min-w-[148px] max-w-[180px] shrink-0 rounded-lg border border-transparent bg-slate-800 p-3 shadow-sm transition duration-200 hover:border-indigo-400/50 hover:shadow-indigo-500/10"
+            style={{ borderLeftWidth: 3, borderLeftColor: color }}
+        >
+            <div className="absolute right-1.5 top-1.5 flex gap-1 opacity-0 transition group-hover:opacity-100">
+                {canDelete ? (
+                    <button
+                        type="button"
+                        onClick={() => onRemove(placement)}
+                        className="rounded-md bg-slate-900/90 p-1 text-slate-300 hover:bg-rose-500/20 hover:text-rose-300"
+                        title="Удалить"
+                    >
+                        <XMarkIcon className="h-3.5 w-3.5" />
+                    </button>
+                ) : null}
+                <span
+                    className="rounded-md bg-slate-900/90 p-1 text-slate-500"
+                    title="Редактирование фейсинга — скоро"
+                >
+                    <PencilSquareIcon className="h-3.5 w-3.5" />
+                </span>
+            </div>
 
-        return {
-            tabs: session.tabs,
-            activeKey: session.activeKey || (session.tabs[0]
-                ? tabKey(session.tabs[0].type || 'shelf', session.tabs[0].id)
-                : null),
-        };
-    } catch {
-        return { tabs: [], activeKey: null };
-    }
+            <p className="pr-10 text-sm font-medium leading-snug text-white line-clamp-2">
+                {placement.product_name || 'Без названия'}
+            </p>
+            <p className="mt-1.5 text-xs text-slate-400">
+                {placement.product_volume_ml
+                    ? `${placement.product_volume_ml} мл`
+                    : placement.product_package_type || '—'}
+            </p>
+            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-300">
+                <span>Фейс ×{placement.facings}</span>
+                <span>{placement.width_mm ? `${placement.width_mm} мм` : '—'}</span>
+                <span className="text-slate-500">
+                    {placement.occupied_cm != null
+                        ? `${placement.occupied_cm} см`
+                        : ''}
+                </span>
+            </div>
+        </div>
+    );
 }
 
-function writeStoredSession(storeId, tabs, activeKey) {
-    if (!storeId || typeof window === 'undefined') {
-        return;
-    }
+function ShelfLevelCard({
+    level,
+    shelfWidthCm,
+    canEdit,
+    canDelete,
+    onAdd,
+    onRemove,
+    index,
+}) {
+    const placements = level.placements || [];
+    const empty = placements.length === 0;
 
-    try {
-        const raw = window.localStorage.getItem(TABS_STORAGE_KEY);
-        const parsed = raw ? JSON.parse(raw) : {};
-        parsed[storeId] = { tabs, activeKey };
-        window.localStorage.setItem(TABS_STORAGE_KEY, JSON.stringify(parsed));
-    } catch {
-        // ignore
-    }
+    return (
+        <section
+            className={clsx(
+                'planogram-level-enter rounded-xl bg-slate-900 p-4 ring-1 transition duration-300',
+                level.overflow
+                    ? 'ring-rose-500/50'
+                    : 'ring-slate-800 hover:ring-slate-700',
+            )}
+            style={{ animationDelay: `${index * 60}ms` }}
+        >
+            <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                    <h3 className="text-sm font-semibold uppercase tracking-wide text-white">
+                        Полка {level.level_number}
+                        <span className="ml-2 font-normal normal-case text-slate-400">
+                            ({Math.round(shelfWidthCm)} см)
+                        </span>
+                    </h3>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                        Занято {level.used_cm ?? 0} см · свободно{' '}
+                        {level.free_cm ?? Math.max(0, shelfWidthCm - (level.used_cm || 0))} см
+                    </p>
+                </div>
+                {canEdit ? (
+                    <button
+                        type="button"
+                        onClick={() => onAdd(level.id)}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
+                    >
+                        <PlusIcon className="h-3.5 w-3.5" />
+                        Добавить
+                    </button>
+                ) : null}
+            </div>
+
+            <FillBar percent={level.fill_percent ?? 0} overflow={level.overflow} />
+
+            {level.overflow ? (
+                <p className="mt-2 rounded-lg bg-rose-500/10 px-3 py-2 text-xs font-medium text-rose-300">
+                    Переполнено: {level.fill_percent}% от ширины полки. Уберите
+                    товар или уменьшите фейсинг.
+                </p>
+            ) : null}
+
+            {empty ? (
+                <div className="mt-4 flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-700 px-4 py-8 text-center">
+                    <p className="text-sm text-slate-400">Пусто — добавьте товар</p>
+                    {canEdit ? (
+                        <button
+                            type="button"
+                            onClick={() => onAdd(level.id)}
+                            className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-sm font-medium text-indigo-300 hover:bg-slate-700 hover:text-indigo-200"
+                        >
+                            <PlusIcon className="h-4 w-4" />
+                            Добавить
+                        </button>
+                    ) : null}
+                </div>
+            ) : (
+                <div className="mt-4 flex gap-3 overflow-x-auto pb-1">
+                    {placements.map((placement) => (
+                        <ProductCard
+                            key={placement.id}
+                            placement={placement}
+                            canDelete={canDelete}
+                            onRemove={onRemove}
+                        />
+                    ))}
+                    {canEdit ? (
+                        <button
+                            type="button"
+                            onClick={() => onAdd(level.id)}
+                            className="flex min-w-[120px] shrink-0 flex-col items-center justify-center rounded-lg border border-dashed border-slate-700 bg-slate-800/40 p-3 text-xs font-medium text-slate-400 transition hover:border-indigo-400/40 hover:text-indigo-300"
+                        >
+                            <PlusIcon className="mb-1 h-5 w-5" />
+                            Добавить
+                        </button>
+                    ) : null}
+                </div>
+            )}
+        </section>
+    );
 }
 
-function toTab(equipment) {
-    return {
-        id: equipment.id,
-        type: equipment.type || 'shelf',
-        code: equipment.code,
-        name: equipment.name,
-        key: tabKey(equipment.type || 'shelf', equipment.id),
-    };
+function TableView({ shelf, canDelete, onRemove }) {
+    const rows = (shelf.levels || []).flatMap((level) =>
+        (level.placements || []).map((p) => ({ ...p, level_number: level.level_number })),
+    );
+
+    if (rows.length === 0) {
+        return (
+            <div className="rounded-xl border border-dashed border-slate-700 px-4 py-12 text-center text-sm text-slate-400">
+                На этом стеллаже пока нет товаров.
+            </div>
+        );
+    }
+
+    return (
+        <div className="overflow-hidden rounded-xl ring-1 ring-slate-800">
+            <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-slate-800 text-sm">
+                    <thead className="bg-slate-900 text-left text-xs uppercase tracking-wide text-slate-400">
+                        <tr>
+                            <th className="px-3 py-2.5">Полка</th>
+                            <th className="px-3 py-2.5">Товар</th>
+                            <th className="px-3 py-2.5">Объём</th>
+                            <th className="px-3 py-2.5">Фейс</th>
+                            <th className="px-3 py-2.5">Ширина</th>
+                            <th className="px-3 py-2.5">Место</th>
+                            <th className="px-3 py-2.5" />
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800 bg-slate-900/60">
+                        {rows.map((row) => (
+                            <tr key={row.id} className="text-slate-200">
+                                <td className="px-3 py-2.5">{row.level_number}</td>
+                                <td className="px-3 py-2.5">
+                                    <div className="flex items-center gap-2">
+                                        <span
+                                            className="h-2.5 w-2.5 shrink-0 rounded-full"
+                                            style={{
+                                                background: row.zone_color || '#6366f1',
+                                            }}
+                                        />
+                                        <span className="font-medium text-white">
+                                            {row.product_name}
+                                        </span>
+                                    </div>
+                                    <p className="font-mono text-[11px] text-slate-500">
+                                        {row.product_barcode}
+                                    </p>
+                                </td>
+                                <td className="px-3 py-2.5">
+                                    {row.product_volume_ml
+                                        ? `${row.product_volume_ml} мл`
+                                        : '—'}
+                                </td>
+                                <td className="px-3 py-2.5">×{row.facings}</td>
+                                <td className="px-3 py-2.5">
+                                    {row.width_mm ? `${row.width_mm} мм` : '—'}
+                                </td>
+                                <td className="px-3 py-2.5">{row.occupied_cm} см</td>
+                                <td className="px-3 py-2.5 text-right">
+                                    {canDelete ? (
+                                        <button
+                                            type="button"
+                                            onClick={() => onRemove(row)}
+                                            className="text-xs text-rose-300 hover:text-rose-200"
+                                        >
+                                            Удалить
+                                        </button>
+                                    ) : null}
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
 }
 
 export default function Index({
@@ -95,51 +289,53 @@ export default function Index({
     activeShelf = null,
     filters = {},
 }) {
-    const equipmentFromServer = activeEquipment || activeShelf;
+    const shelf = activeEquipment?.type === 'shelf' ? activeEquipment : activeShelf;
     const { flash } = usePage().props;
     const can = useCan();
-    const canEditPlanogram = can('create-planograms', 'edit-planograms');
-    const canDeletePlanogram = can('delete-planograms');
-    const storeId = filters.store_id || '';
+    const canEdit = can('create-planograms', 'edit-planograms');
+    const canDelete = can('delete-planograms');
 
-    const initialSession = useMemo(
-        () => readStoredSession(filters.store_id || ''),
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-        [],
+    const [viewMode, setViewMode] = useState('cards');
+    const [modalLevelId, setModalLevelId] = useState(null);
+    const [showModal, setShowModal] = useState(false);
+
+    const storeId = filters.store_id || stores[0]?.id || '';
+
+    const departments = useMemo(
+        () =>
+            (tree || []).map((d) => ({
+                id: d.id,
+                name: d.name,
+                code: d.code,
+                color: d.color,
+                shelves: d.shelves || [],
+            })),
+        [tree],
     );
 
-    const [tabs, setTabs] = useState(() => {
-        if (!equipmentFromServer) {
-            return initialSession.tabs;
+    const selectedDepartmentId = useMemo(() => {
+        if (shelf?.department_id) {
+            return shelf.department_id;
         }
-        const next = toTab(equipmentFromServer);
-        if (initialSession.tabs.some((tab) => tab.key === next.key)) {
-            return initialSession.tabs;
-        }
-        return [...initialSession.tabs, next];
-    });
+        const fromShelf = departments.find((d) =>
+            d.shelves.some((s) => s.id === filters.shelf_id),
+        );
+        return fromShelf?.id || departments[0]?.id || '';
+    }, [shelf, departments, filters.shelf_id]);
 
-    const [activeKey, setActiveKey] = useState(() => {
-        if (equipmentFromServer) {
-            return tabKey(equipmentFromServer.type || 'shelf', equipmentFromServer.id);
-        }
-        return initialSession.activeKey;
-    });
+    const shelvesInDept = useMemo(() => {
+        const dept = departments.find((d) => d.id === selectedDepartmentId);
+        return dept?.shelves || [];
+    }, [departments, selectedDepartmentId]);
 
-    const [cache, setCache] = useState(() => {
-        if (!equipmentFromServer) {
-            return {};
-        }
-        const key = tabKey(equipmentFromServer.type || 'shelf', equipmentFromServer.id);
-        return { [key]: equipmentFromServer };
-    });
-
-    const [searchQuery, setSearchQuery] = useState('');
-    const [navOpen, setNavOpen] = useState(false);
-    const [showForm, setShowForm] = useState(false);
-
-    const current = activeKey ? cache[activeKey] || null : null;
-    const isShelf = current?.type === 'shelf' || (!current?.type && current);
+    const navigate = (params) => {
+        router.get(route('planograms.index'), params, {
+            preserveState: true,
+            preserveScroll: true,
+            replace: true,
+            only: ['activeEquipment', 'activeShelf', 'filters', 'tree', 'stores'],
+        });
+    };
 
     useEffect(() => {
         if (flash?.success && flash.success !== 'Товар размещён') {
@@ -150,362 +346,316 @@ export default function Index({
         }
     }, [flash]);
 
+    // Автовыбор первого стеллажа в отделе, если ещё не выбран.
     useEffect(() => {
-        if (!equipmentFromServer) {
+        if (!storeId || filters.shelf_id || shelvesInDept.length === 0) {
             return;
         }
-
-        const key = tabKey(equipmentFromServer.type || 'shelf', equipmentFromServer.id);
-        setCache((prev) => ({ ...prev, [key]: equipmentFromServer }));
-        setTabs((prev) => {
-            if (prev.some((tab) => tab.key === key)) {
-                return prev;
-            }
-            return [...prev, toTab(equipmentFromServer)];
+        navigate({
+            store_id: storeId,
+            shelf_id: shelvesInDept[0].id,
         });
-        setActiveKey(key);
-    }, [equipmentFromServer]);
-
-    useEffect(() => {
-        writeStoredSession(storeId, tabs, activeKey);
-    }, [storeId, tabs, activeKey]);
-
-    const loadEquipment = (type, id, nextStoreId = storeId) => {
-        router.get(
-            route('planograms.index'),
-            {
-                store_id: nextStoreId || undefined,
-                ...equipmentQuery(type, id),
-            },
-            {
-                preserveState: true,
-                preserveScroll: true,
-                replace: true,
-                only: ['activeEquipment', 'activeShelf', 'filters', 'tree', 'stores'],
-            },
-        );
-    };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [storeId, filters.shelf_id, shelvesInDept]);
 
     const handleStoreChange = (nextStoreId) => {
-        const session = readStoredSession(nextStoreId);
-        setTabs(session.tabs);
-        setActiveKey(session.activeKey);
-        setSearchQuery('');
-        setNavOpen(false);
-        setCache({});
-
-        const activeTab = session.tabs.find((tab) => tab.key === session.activeKey);
-
-        router.get(
-            route('planograms.index'),
-            {
-                store_id: nextStoreId || undefined,
-                ...(activeTab
-                    ? equipmentQuery(activeTab.type || 'shelf', activeTab.id)
-                    : {}),
-            },
-            {
-                preserveState: true,
-                preserveScroll: true,
-                replace: true,
-                only: ['activeEquipment', 'activeShelf', 'filters', 'tree', 'stores'],
-            },
-        );
+        navigate({ store_id: nextStoreId || undefined });
     };
 
-    const openEquipment = (item) => {
-        const type = item.type || 'shelf';
-        const key = tabKey(type, item.id);
-
-        setTabs((prev) => {
-            if (prev.some((tab) => tab.key === key)) {
-                return prev;
-            }
-            return [...prev, toTab({ ...item, type })];
+    const handleDepartmentChange = (deptId) => {
+        const dept = departments.find((d) => d.id === deptId);
+        const firstShelf = dept?.shelves?.[0];
+        navigate({
+            store_id: storeId || undefined,
+            shelf_id: firstShelf?.id,
         });
-        setActiveKey(key);
-        setNavOpen(false);
-
-        if (!cache[key]) {
-            loadEquipment(type, item.id);
-            return;
-        }
-
-        router.get(
-            route('planograms.index'),
-            {
-                store_id: storeId || undefined,
-                ...equipmentQuery(type, item.id),
-            },
-            {
-                preserveState: true,
-                preserveScroll: true,
-                replace: true,
-                only: ['filters'],
-            },
-        );
     };
 
-    const selectTab = (tabId) => {
-        const tab = tabs.find((item) => item.id === tabId || item.key === tabId);
-        if (!tab) {
-            return;
-        }
-
-        const type = tab.type || 'shelf';
-        const key = tab.key || tabKey(type, tab.id);
-        setActiveKey(key);
-
-        if (!cache[key]) {
-            loadEquipment(type, tab.id);
-            return;
-        }
-
-        router.get(
-            route('planograms.index'),
-            {
-                store_id: storeId || undefined,
-                ...equipmentQuery(type, tab.id),
-            },
-            {
-                preserveState: true,
-                preserveScroll: true,
-                replace: true,
-                only: ['filters'],
-            },
-        );
-    };
-
-    const closeTab = (tabId) => {
-        const closing = tabs.find((item) => item.id === tabId || item.key === tabId);
-        if (!closing) {
-            return;
-        }
-
-        const closingKey = closing.key || tabKey(closing.type || 'shelf', closing.id);
-        const remaining = tabs.filter(
-            (tab) => (tab.key || tabKey(tab.type || 'shelf', tab.id)) !== closingKey,
-        );
-        setTabs(remaining);
-        setCache((prev) => {
-            const next = { ...prev };
-            delete next[closingKey];
-            return next;
+    const handleShelfChange = (shelfId) => {
+        navigate({
+            store_id: storeId || undefined,
+            shelf_id: shelfId || undefined,
         });
-
-        if (activeKey !== closingKey) {
-            return;
-        }
-
-        const nextActive = remaining[remaining.length - 1] || null;
-        const nextKey = nextActive
-            ? nextActive.key || tabKey(nextActive.type || 'shelf', nextActive.id)
-            : null;
-        setActiveKey(nextKey);
-
-        if (nextActive) {
-            loadEquipment(nextActive.type || 'shelf', nextActive.id);
-        } else {
-            loadEquipment(null, null);
-        }
     };
 
-    const handlePlacementAdded = () => {
-        if (!current || current.type !== 'shelf') {
-            return;
-        }
-        setCache((prev) => {
-            const next = { ...prev };
-            delete next[tabKey('shelf', current.id)];
-            return next;
-        });
-        loadEquipment('shelf', current.id);
+    const openAdd = (levelId = null) => {
+        setModalLevelId(levelId || shelf?.levels?.[0]?.id || null);
+        setShowModal(true);
     };
 
     const removePlacement = async (placement) => {
-        if (!current || current.type !== 'shelf') {
-            return;
-        }
-
         const confirmed = await fireConfirm(
             'Удалить размещение?',
-            `«${placement.product_name}» (${placement.start_cm}–${placement.end_cm} см) будет удалено с полки.`,
+            `«${placement.product_name}» будет убран с полки.`,
+            'Удалить',
         );
-
-        if (!confirmed) {
-            return;
-        }
+        if (!confirmed) return;
 
         router.delete(route('planograms.placements.destroy', placement.id), {
             preserveScroll: true,
-            onSuccess: () => {
-                setCache((prev) => {
-                    const next = { ...prev };
-                    delete next[tabKey('shelf', current.id)];
-                    return next;
-                });
-            },
             onError: () => fireError('Не удалось удалить размещение.'),
         });
     };
 
-    const tabsForUi = tabs.map((tab) => ({
-        ...tab,
-        id: tab.key || tabKey(tab.type || 'shelf', tab.id),
-        code: tab.type && tab.type !== 'shelf'
-            ? `${tab.type === 'cooler' ? '❄' : '▣'} ${tab.code}`
-            : tab.code,
-    }));
+    const handlePrint = () => {
+        window.print();
+    };
+
+    const handleExport = () => {
+        if (!shelf) {
+            fireError('Сначала выберите стеллаж.');
+            return;
+        }
+
+        const rows = [['Полка', 'Товар', 'Штрихкод', 'Объём мл', 'Фейсинг', 'Ширина мм', 'Место см']];
+        (shelf.levels || []).forEach((level) => {
+            (level.placements || []).forEach((p) => {
+                rows.push([
+                    level.level_number,
+                    p.product_name || '',
+                    p.product_barcode || '',
+                    p.product_volume_ml || '',
+                    p.facings || '',
+                    p.width_mm || '',
+                    p.occupied_cm || '',
+                ]);
+            });
+        });
+
+        const csv = rows
+            .map((row) =>
+                row
+                    .map((cell) => `"${String(cell).replace(/"/g, '""')}"`)
+                    .join(','),
+            )
+            .join('\n');
+
+        const blob = new Blob(['\uFEFF' + csv], {
+            type: 'text/csv;charset=utf-8;',
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `planogram-${shelf.code || shelf.id}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+    };
+
+    const shelfWidthCm = Number(shelf?.width_cm) || 0;
 
     return (
         <AdminLayout
-            flush
             header={
                 <h1 className="text-xl font-semibold leading-tight text-white">
                     Планограммы
                 </h1>
             }
         >
-            <Head title="Планограммы" />
+            <Head title="Планограммы">
+                <style>{`
+                    @keyframes planogramFadeUp {
+                        from { opacity: 0; transform: translateY(8px); }
+                        to { opacity: 1; transform: translateY(0); }
+                    }
+                    .planogram-level-enter {
+                        animation: planogramFadeUp 0.35s ease-out both;
+                    }
+                    @media print {
+                        aside, header, .no-print { display: none !important; }
+                        body { background: white !important; color: black !important; }
+                    }
+                `}</style>
+            </Head>
 
-            <div className="relative flex h-full overflow-hidden bg-[#0e172b]">
-                <aside className="hidden w-[250px] shrink-0 border-r border-slate-800 lg:block">
-                    <Sidebar
-                        stores={stores}
-                        tree={tree}
-                        storeId={storeId}
-                        activeId={current?.id}
-                        activeType={current?.type || 'shelf'}
-                        searchQuery={searchQuery}
-                        onStoreChange={handleStoreChange}
-                        onOpenEquipment={openEquipment}
-                    />
-                </aside>
+            <div className="space-y-4">
+                <div className="no-print flex flex-wrap items-end gap-3 rounded-xl bg-[#152033] p-4 ring-1 ring-slate-800">
+                    <label className="min-w-[160px] flex-1 text-xs text-slate-400">
+                        Магазин
+                        <select
+                            className={clsx(selectClass, 'mt-1 w-full')}
+                            value={storeId}
+                            onChange={(e) => handleStoreChange(e.target.value)}
+                        >
+                            {stores.length === 0 ? (
+                                <option value="">Нет магазинов</option>
+                            ) : null}
+                            {stores.map((store) => (
+                                <option key={store.id} value={store.id}>
+                                    {store.name}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
 
-                <div
-                    className={clsx(
-                        'fixed inset-0 z-40 lg:hidden',
-                        navOpen ? 'pointer-events-auto' : 'pointer-events-none',
-                    )}
-                >
-                    <div
-                        className={clsx(
-                            'absolute inset-0 bg-gray-900/50 transition-opacity',
-                            navOpen ? 'opacity-100' : 'opacity-0',
-                        )}
-                        onClick={() => setNavOpen(false)}
-                        aria-hidden="true"
-                    />
-                    <aside
-                        className={clsx(
-                            'absolute inset-y-0 left-0 flex w-[250px] max-w-[85vw] flex-col bg-[#152033] shadow-xl transition-transform duration-300',
-                            navOpen ? 'translate-x-0' : '-translate-x-full',
-                        )}
-                    >
-                        <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
-                            <span className="text-sm font-semibold text-white">
-                                Навигация
-                            </span>
+                    <label className="min-w-[160px] flex-1 text-xs text-slate-400">
+                        Отдел
+                        <select
+                            className={clsx(selectClass, 'mt-1 w-full')}
+                            value={selectedDepartmentId}
+                            onChange={(e) => handleDepartmentChange(e.target.value)}
+                            disabled={departments.length === 0}
+                        >
+                            {departments.length === 0 ? (
+                                <option value="">Нет отделов</option>
+                            ) : null}
+                            {departments.map((dept) => (
+                                <option key={dept.id} value={dept.id}>
+                                    {dept.code !== '—' ? `${dept.code} — ` : ''}
+                                    {dept.name}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+
+                    <label className="min-w-[200px] flex-[1.2] text-xs text-slate-400">
+                        Стеллаж
+                        <select
+                            className={clsx(selectClass, 'mt-1 w-full')}
+                            value={filters.shelf_id || shelf?.id || ''}
+                            onChange={(e) => handleShelfChange(e.target.value)}
+                            disabled={shelvesInDept.length === 0}
+                        >
+                            {shelvesInDept.length === 0 ? (
+                                <option value="">Нет стеллажей</option>
+                            ) : null}
+                            {shelvesInDept.map((item) => (
+                                <option key={item.id} value={item.id}>
+                                    {item.code} — {item.name} ·{' '}
+                                    {formatWidthLabel(item.width_cm, item.width_m)}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+
+                    <div className="flex flex-wrap gap-2">
+                        <div className="inline-flex rounded-lg bg-[#0e172b] p-1 ring-1 ring-slate-800">
                             <button
                                 type="button"
-                                onClick={() => setNavOpen(false)}
-                                className="rounded-lg p-1.5 text-slate-400 hover:bg-[#0e172b]"
+                                onClick={() => setViewMode('cards')}
+                                className={clsx(
+                                    'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium',
+                                    viewMode === 'cards'
+                                        ? 'bg-indigo-600 text-white'
+                                        : 'text-slate-400 hover:text-white',
+                                )}
                             >
-                                <XMarkIcon className="h-5 w-5" />
+                                <Squares2X2Icon className="h-4 w-4" />
+                                Карточки
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setViewMode('table')}
+                                className={clsx(
+                                    'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium',
+                                    viewMode === 'table'
+                                        ? 'bg-indigo-600 text-white'
+                                        : 'text-slate-400 hover:text-white',
+                                )}
+                            >
+                                <TableCellsIcon className="h-4 w-4" />
+                                Таблица
                             </button>
                         </div>
-                        <Sidebar
-                            stores={stores}
-                            tree={tree}
-                            storeId={storeId}
-                            activeId={current?.id}
-                            activeType={current?.type || 'shelf'}
-                            searchQuery={searchQuery}
-                            onStoreChange={handleStoreChange}
-                            onOpenEquipment={openEquipment}
-                        />
-                    </aside>
-                </div>
 
-                <div className="flex min-w-0 flex-1 flex-col">
-                    <div className="flex items-stretch border-b border-slate-800 bg-[#152033]">
                         <button
                             type="button"
-                            onClick={() => setNavOpen(true)}
-                            className="shrink-0 border-r border-slate-800 px-3 text-slate-400 hover:bg-slate-800 lg:hidden"
-                            aria-label="Открыть список"
+                            onClick={handlePrint}
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-700"
                         >
-                            <Bars3Icon className="h-5 w-5" />
+                            <PrinterIcon className="h-4 w-4" />
+                            Печать
                         </button>
-                        <div className="min-w-0 flex-1">
-                            <Tabs
-                                tabs={tabsForUi}
-                                activeId={activeKey}
-                                searchQuery={searchQuery}
-                                onSearchChange={setSearchQuery}
-                                onSelect={selectTab}
-                                onClose={closeTab}
-                            />
-                        </div>
-                    </div>
-
-                    {isShelf && current && (
-                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 bg-[#152033] px-3 py-2">
-                            {canEditPlanogram && (
-                            <button
-                                type="button"
-                                onClick={() => setShowForm(true)}
-                                disabled={!current.levels?.length}
-                                className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                                <PlusIcon className="h-4 w-4" />
-                                Добавить товар
-                            </button>
-                            )}
-
-                            <div className="flex max-w-full gap-2 overflow-x-auto">
-                                {canDeletePlanogram && current.levels?.flatMap((level) =>
-                                    (level.placements || []).map((placement) => (
-                                        <button
-                                            key={placement.id}
-                                            type="button"
-                                            onClick={() => removePlacement(placement)}
-                                            className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-slate-800 px-2 py-1 text-xs text-slate-300 hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-400"
-                                        >
-                                            <TrashIcon className="h-3.5 w-3.5" />
-                                            <span className="max-w-[9rem] truncate">
-                                                {placement.product_name}
-                                            </span>
-                                        </button>
-                                    )),
-                                )}
-                            </div>
-                        </div>
-                    )}
-
-                    {current && !isShelf && (
-                        <div className="border-b border-slate-800 bg-sky-50 px-3 py-2 text-sm text-sky-800">
-                            {current.type === 'cooler'
-                                ? `Холодильник · ${current.temperature_zone_label || ''} · двери: ${current.door_count ?? '—'}`
-                                : `Стойка · ${current.stand_type_label || ''} · ${current.has_back ? 'с задней стенкой' : 'без задней стенки'}`}
-                            {' · '}
-                            размещение товаров пока только на стеллажах
-                        </div>
-                    )}
-
-                    <div className="min-h-0 flex-1 overflow-hidden">
-                        <ShelfView shelf={current} />
+                        <button
+                            type="button"
+                            onClick={handleExport}
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-700"
+                        >
+                            <ArrowDownTrayIcon className="h-4 w-4" />
+                            Экспорт
+                        </button>
                     </div>
                 </div>
+
+                {!shelf ? (
+                    <div className="rounded-xl border border-dashed border-slate-700 px-4 py-16 text-center text-sm text-slate-400">
+                        Выберите магазин, отдел и стеллаж, чтобы увидеть полки и
+                        заполнение по ширине.
+                    </div>
+                ) : (
+                    <>
+                        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[#152033] px-4 py-3 ring-1 ring-slate-800">
+                            <div>
+                                <p className="text-sm font-semibold text-white">
+                                    {shelf.code} — {shelf.name}
+                                </p>
+                                <p className="mt-0.5 text-xs text-slate-400">
+                                    Длина стеллажа:{' '}
+                                    <span className="font-medium text-slate-200">
+                                        {formatWidthLabel(shelf.width_cm, shelf.width_m)}
+                                    </span>
+                                    {shelf.department_name
+                                        ? ` · ${shelf.department_name}`
+                                        : ''}
+                                </p>
+                            </div>
+                            {canEdit ? (
+                                <button
+                                    type="button"
+                                    onClick={() => openAdd()}
+                                    disabled={!shelf.levels?.length}
+                                    className="no-print inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+                                >
+                                    <PlusIcon className="h-4 w-4" />
+                                    Добавить товар
+                                </button>
+                            ) : null}
+                        </div>
+
+                        {viewMode === 'cards' ? (
+                            <div className="space-y-4">
+                                {(shelf.levels || []).map((level, index) => (
+                                    <ShelfLevelCard
+                                        key={level.id}
+                                        level={level}
+                                        shelfWidthCm={shelfWidthCm}
+                                        canEdit={canEdit}
+                                        canDelete={canDelete}
+                                        onAdd={openAdd}
+                                        onRemove={removePlacement}
+                                        index={index}
+                                    />
+                                ))}
+                                {(shelf.levels || []).length === 0 ? (
+                                    <div className="rounded-xl border border-dashed border-slate-700 px-4 py-10 text-center text-sm text-slate-400">
+                                        У стеллажа нет полок (уровней).
+                                    </div>
+                                ) : null}
+                            </div>
+                        ) : (
+                            <TableView
+                                shelf={shelf}
+                                canDelete={canDelete}
+                                onRemove={removePlacement}
+                            />
+                        )}
+                    </>
+                )}
             </div>
 
-            {showForm && isShelf && current && canEditPlanogram && (
+            {showModal && shelf && canEdit ? (
                 <AddPlacementModal
-                    shelf={current}
-                    onClose={() => setShowForm(false)}
-                    onAdded={handlePlacementAdded}
+                    shelf={shelf}
+                    initialLevelId={modalLevelId}
+                    onClose={() => {
+                        setShowModal(false);
+                        setModalLevelId(null);
+                    }}
+                    onAdded={() => {
+                        setShowModal(false);
+                        setModalLevelId(null);
+                    }}
                 />
-            )}
+            ) : null}
         </AdminLayout>
     );
 }

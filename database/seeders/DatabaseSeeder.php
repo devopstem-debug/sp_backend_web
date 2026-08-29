@@ -18,6 +18,7 @@ class DatabaseSeeder extends Seeder
             SuperAdminSeeder::class,
             PlanSeeder::class,
             LegalDocumentSeeder::class,
+            BotTrainingSeeder::class,
         ]);
     }
 }

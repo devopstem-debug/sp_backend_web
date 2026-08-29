@@ -9,3 +9,7 @@ Artisan::command('inspire', function () {
 })->purpose('Display an inspiring quote');
 
 Schedule::command('subscriptions:process')->dailyAt('06:00');
+Schedule::command('products:bot-scan --limit=15')
+    ->everyThirtySeconds()
+    ->withoutOverlapping(2)
+    ->runInBackground();

@@ -59,6 +59,8 @@ class SecurityHeaders
                 'https://*.tile.openstreetmap.org',
                 'https://tile.openstreetmap.org',
                 'https://*.openstreetmap.org',
+                'https://server.arcgisonline.com',
+                'https://*.arcgisonline.com',
             ],
             $this->parseCsv(config('security.csp_img_src_extra')),
         ));

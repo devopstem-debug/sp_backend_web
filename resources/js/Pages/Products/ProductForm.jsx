@@ -7,7 +7,7 @@ const PACKAGE_TYPES = [
     'Пакет',
     'Коробка',
     'Другое',
-];
+]; // keep in sync with App\Support\ProductPackageTypes
 
 function FieldError({ message }) {
     if (!message) {

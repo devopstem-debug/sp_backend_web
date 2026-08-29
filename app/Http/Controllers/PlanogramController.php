@@ -52,8 +52,8 @@ class PlanogramController extends Controller implements HasMiddleware
             $model = Shelf::query()
                 ->with([
                     'store:id,name,city',
-                    'department:id,name,code',
-                    'levels.placements.product:id,barcode,name,category,width_mm',
+                    'department:id,name,code,color',
+                    'levels.placements.product:id,barcode,name,category,volume_ml,package_type,width_mm,height_mm,depth_mm',
                 ])
                 ->find($shelfId);
 
@@ -179,7 +179,7 @@ class PlanogramController extends Controller implements HasMiddleware
             ->where('store_id', $storeId)
             ->orderBy('sort_order')
             ->orderBy('code')
-            ->get(['id', 'code', 'name']);
+            ->get(['id', 'code', 'name', 'color']);
 
         $shelvesByDept = $shelves->groupBy(fn (Shelf $item) => $item->department_id ?? 'none');
         $coolersByDept = $coolers->groupBy(fn (Cooler $item) => $item->department_id ?? 'none');
@@ -203,6 +203,7 @@ class PlanogramController extends Controller implements HasMiddleware
                 $shelvesByDept,
                 $coolersByDept,
                 $standsByDept,
+                $department->color,
             );
 
             if ($this->nodeHasEquipment($node)) {
@@ -223,6 +224,7 @@ class PlanogramController extends Controller implements HasMiddleware
             $shelvesByDept,
             $coolersByDept,
             $standsByDept,
+            '#64748b',
         );
 
         if ($this->nodeHasEquipment($orphan)) {
@@ -245,11 +247,13 @@ class PlanogramController extends Controller implements HasMiddleware
         $shelvesByDept,
         $coolersByDept,
         $standsByDept,
+        ?string $color = null,
     ): array {
         return [
             'id' => $id,
             'code' => $code,
             'name' => $name,
+            'color' => $color ?: '#6366f1',
             'shelves' => ($shelvesByDept->get($id) ?? collect())
                 ->map(fn (Shelf $shelf) => $this->transformShelfNavItem($shelf))
                 ->values()
@@ -292,12 +296,16 @@ class PlanogramController extends Controller implements HasMiddleware
      */
     private function transformShelfNavItem(Shelf $shelf): array
     {
+        $widthCm = (float) ($shelf->width_cm ?: max(1, round(($shelf->width_mm ?? 0) / 10)));
+
         return [
             'id' => $shelf->id,
             'type' => 'shelf',
             'code' => $shelf->code,
             'name' => $this->localized($shelf->name),
-            'width_cm' => $shelf->width_cm,
+            'width_cm' => $widthCm,
+            'width_mm' => $shelf->width_mm ?: (int) round($widthCm * 10),
+            'width_m' => round($widthCm / 100, 2),
             'levels_count' => (int) $shelf->levels_count,
             'placements_count' => (int) $shelf->placements_count,
             'department_id' => $shelf->department_id,
@@ -309,45 +317,79 @@ class PlanogramController extends Controller implements HasMiddleware
      */
     private function transformShelfDetail(Shelf $shelf): array
     {
+        $zoneColor = $shelf->department?->color ?: '#6366f1';
+
         $levels = $shelf->levels
             ->sortByDesc('level_number')
             ->values()
-            ->map(function ($level) {
+            ->map(function ($level) use ($shelf, $zoneColor) {
+                $placements = $level->placements->map(function (Placement $placement) use ($zoneColor) {
+                    $widthMm = $placement->product?->width_mm;
+                    $facings = (int) $placement->facings;
+                    $spanCm = max(0, (float) $placement->end_cm - (float) $placement->start_cm);
+                    $occupiedCm = $widthMm && $facings > 0
+                        ? round(($widthMm / 10) * $facings, 2)
+                        : round($spanCm, 2);
+
+                    return [
+                        'id' => $placement->id,
+                        'product_id' => $placement->product_id,
+                        'product_name' => $placement->product?->name,
+                        'product_barcode' => $placement->product?->barcode,
+                        'product_category' => $placement->product?->category,
+                        'product_volume_ml' => $placement->product?->volume_ml,
+                        'product_package_type' => $placement->product?->package_type,
+                        'width_mm' => $widthMm,
+                        'height_mm' => $placement->product?->height_mm,
+                        'depth_mm' => $placement->product?->depth_mm,
+                        'occupied_cm' => $occupiedCm,
+                        'start_cm' => $placement->start_cm,
+                        'end_cm' => $placement->end_cm,
+                        'facings' => $facings,
+                        'zone_color' => $zoneColor,
+                    ];
+                })->values();
+
+                $usedCm = round((float) $placements->sum('occupied_cm'), 2);
+                $shelfWidthCm = (float) ($shelf->width_cm ?: max(1, round(($shelf->width_mm ?? 0) / 10)));
+                $fillPercent = $shelfWidthCm > 0
+                    ? round(($usedCm / $shelfWidthCm) * 100, 1)
+                    : 0;
+
                 return [
                     'id' => $level->id,
                     'level_number' => $level->level_number,
                     'height_cm' => $level->height_cm,
                     'height_from_floor_mm' => $level->height_from_floor_mm,
                     'capacity_mm' => $level->capacity_mm,
-                    'placements' => $level->placements->map(function (Placement $placement) {
-                        return [
-                            'id' => $placement->id,
-                            'product_id' => $placement->product_id,
-                            'product_name' => $placement->product?->name,
-                            'product_barcode' => $placement->product?->barcode,
-                            'start_cm' => $placement->start_cm,
-                            'end_cm' => $placement->end_cm,
-                            'facings' => $placement->facings,
-                        ];
-                    })->values()->all(),
+                    'used_cm' => $usedCm,
+                    'free_cm' => max(0, round($shelfWidthCm - $usedCm, 2)),
+                    'fill_percent' => $fillPercent,
+                    'overflow' => $usedCm > $shelfWidthCm + 0.01,
+                    'placements' => $placements->all(),
                 ];
             })
             ->all();
+
+        $widthCm = (float) ($shelf->width_cm ?: max(1, round(($shelf->width_mm ?? 0) / 10)));
 
         return [
             'type' => 'shelf',
             'id' => $shelf->id,
             'code' => $shelf->code,
             'name' => $this->localized($shelf->name),
-            'width_cm' => $shelf->width_cm,
-            'width_mm' => $shelf->width_mm,
+            'width_cm' => $widthCm,
+            'width_mm' => $shelf->width_mm ?: (int) round($widthCm * 10),
+            'width_m' => round($widthCm / 100, 2),
             'height_mm' => $shelf->height_mm,
             'depth_mm' => $shelf->depth_mm,
             'store_id' => $shelf->store_id,
             'store_name' => $this->localized($shelf->store?->name),
+            'department_id' => $shelf->department_id,
             'department_name' => $shelf->department
                 ? ($shelf->department->code.' — '.$this->localized($shelf->department->name))
                 : null,
+            'department_color' => $zoneColor,
             'levels' => $levels,
         ];
     }

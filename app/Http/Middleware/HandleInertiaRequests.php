@@ -36,6 +36,7 @@ class HandleInertiaRequests extends Middleware
                 'user' => $request->user(),
                 'roles' => $request->user()?->getRoleNames()->values()->all() ?? [],
                 'permissions' => $request->user()?->getAllPermissions()->pluck('name')->values()->all() ?? [],
+                'is_super_admin' => $request->user()?->isSuperAdmin() === true,
             ],
             'unread_count' => function () use ($request): int {
                 $user = $request->user();

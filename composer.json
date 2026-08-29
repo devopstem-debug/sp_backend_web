@@ -54,7 +54,11 @@
         ],
         "dev": [
             "Composer\\Config::disableProcessTimeout",
-            "@php artisan dev"
+            "php8.4 artisan dev"
+        ],
+        "serve": [
+            "Composer\\Config::disableProcessTimeout",
+            "php8.4 artisan serve"
         ],
         "post-autoload-dump": [
             "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",
