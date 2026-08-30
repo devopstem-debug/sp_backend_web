@@ -36,6 +36,7 @@ export default function Create({
 
         const nextErrors = validateStoreForm(data);
 
+        // Список арендаторов только у Super Admin; у остальных tenant берётся с аккаунта.
         if (tenants.length > 0 && !data.tenant_id) {
             nextErrors.tenant_id = 'Выберите арендатора.';
         }

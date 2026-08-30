@@ -90,8 +90,16 @@ class StoreController extends Controller implements HasMiddleware
                 ->with('error', $quota['message'] ?? 'Лимит магазинов исчерпан.');
         }
 
+        $tenants = $this->tenantsForSelect();
+
+        if ($actor?->isSuperAdmin() && $tenants === []) {
+            return redirect()
+                ->route('tenants.create')
+                ->with('warning', 'Сначала создайте арендатора — после сброса БД без него магазин создать нельзя.');
+        }
+
         return Inertia::render('Stores/Create', [
-            'tenants' => $this->tenantsForSelect(),
+            'tenants' => $tenants,
             'defaultTenantId' => $request->string('tenant_id')->toString() ?: null,
             'quota' => $quota,
         ]);

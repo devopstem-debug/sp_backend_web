@@ -67,6 +67,10 @@ SECURE_HEADERS_HSTS=true
 REVERB_HOST=your-domain.tld
 REVERB_PORT=443
 REVERB_SCHEME=https
+# PHP публикует события напрямую в Reverb (не через публичный HTTPS):
+REVERB_INTERNAL_HOST=127.0.0.1
+REVERB_INTERNAL_PORT=8080
+REVERB_INTERNAL_SCHEME=http
 ```
 
 3. **Зависимости и сборка**

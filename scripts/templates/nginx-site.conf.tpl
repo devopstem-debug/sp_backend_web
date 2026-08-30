@@ -86,6 +86,15 @@ server {
         proxy_pass http://127.0.0.1:8080;
     }
 
+    # HTTP API Reverb/Pusher (server → /apps/{id}/events). Без этого broadcast даёт 404.
+    location /apps {
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_pass http://127.0.0.1:8080;
+    }
+
     location ~ /\.(?!well-known).* {
         deny all;
     }

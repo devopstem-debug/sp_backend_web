@@ -59,6 +59,7 @@ return Application::configure(basePath: dirname(__DIR__))
             $pages = [
                 403 => 'Errors/Forbidden',
                 404 => 'Errors/NotFound',
+                405 => 'Errors/MethodNotAllowed',
                 419 => 'Errors/PageExpired',
                 429 => 'Errors/TooManyRequests',
                 500 => 'Errors/ServerError',

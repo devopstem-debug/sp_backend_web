@@ -128,3 +128,10 @@ class SyncStoreToFirebase implements ShouldBeUnique, ShouldQueue
                 '/export',
             );
         } catch (Throwable $notifyException) {
+            Log::warning('SyncStoreToFirebase notify failed', [
+                'store_id' => $this->storeId,
+                'message' => $notifyException->getMessage(),
+            ]);
+        }
+    }
+}
