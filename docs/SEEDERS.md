@@ -58,6 +58,20 @@ STORE_CATALOG_STORE=<uuid-магазина> php artisan db:seed --class=StoreCat
 
 ## Порядок для чистого VPS
 
+```bash
+# 1. Обновить код + сбросить БД
+CONFIRM=1 sudo ./scripts/reset.sh
+
+# 2. В UI: арендатор → магазин
+
+# 3. Демо-каталог
+STORE_CATALOG_STORE=<uuid> sudo ./scripts/seed-store-catalog.sh
+
+# 4. Firebase Console → очистить Realtime Database вручную
+```
+
+Или вручную:
+
 1. `php artisan migrate:fresh --seed --force` — роли, админ, тарифы
 2. В UI: **Арендатор** → **Магазин**
 3. `php artisan db:seed --class=StoreCatalogSeeder --force`
