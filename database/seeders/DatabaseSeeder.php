@@ -13,6 +13,8 @@ class DatabaseSeeder extends Seeder
 
     public function run(): void
     {
+        $this->command?->info('Базовые сидеры (роли, админ, тарифы, legal, бот). Демо-магазин — отдельно: StoreCatalogSeeder.');
+
         $this->call([
             RoleSeeder::class,
             SuperAdminSeeder::class,
